@@ -722,11 +722,18 @@ impl LedgerStorage {
         &'a self,
         address: Pubkey,
         before_signature: Option<Signature>,
+        before_slot: Option<Slot>,
     ) -> Result<impl Stream<Item = Result<(
             ConfirmedTransactionStatusWithSignature,
             u32, /*slot index*/
         )>> + 'a>
     {
+        if before_slot.is_some() && before_signature.is_some() {
+            return Err(Error::ArgumentError(
+                "before_slot and before_signature cannot be used together".to_string(),
+            ));
+        }
+
         debug!(
             "LedgerStorage::get_confirmed_signatures_for_address request received: {:?}",
             address
@@ -738,15 +745,19 @@ impl LedgerStorage {
             let address_prefix = format!("{address}/");
 
             // Figure out where to start listing from based on `before_signature`
-            let (first_slot, before_transaction_index) = match before_signature {
-                None => (Slot::MAX, 0),
-                Some(before_signature) => {
+            let (first_slot, before_transaction_index) = match (before_signature, before_slot) {
+                (None, None) => (Slot::MAX, 0),
+                (Some(before_signature), None) => {
                     let TransactionInfo { slot, index, .. } = bigtable
                         .get_bincode_cell("tx", before_signature.to_string())
                         .await?;
 
                     (slot, index)
-                }
+                },
+                (None, Some(before_slot)) => {
+                    (before_slot, u32::MAX)
+                },
+                (Some(_), Some(_)) => unreachable!("Both before_signature and before_slot are set"),
             };
 
             // Return the next tx-by-addr data of amount `limit` plus extra to account for the largest
