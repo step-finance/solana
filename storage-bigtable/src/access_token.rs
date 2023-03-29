@@ -10,9 +10,7 @@ use {
             atomic::{AtomicBool, Ordering},
             {Arc, RwLock},
         },
-        time::Instant,
     },
-    time::OffsetDateTime,
 };
 
 static AUTH_MANAGER: OnceCell<AuthenticationManager> = OnceCell::const_new();
@@ -31,7 +29,7 @@ async fn authentication_manager() -> &'static AuthenticationManager {
 pub struct AccessToken {
     scope: Scope,
     refresh_active: Arc<AtomicBool>,
-    token: Arc<RwLock<(Token, Instant)>>,
+    token: Arc<RwLock<Token>>,
 }
 
 impl AccessToken {
@@ -45,21 +43,17 @@ impl AccessToken {
         Ok(access_token)
     }
 
-    fn expires_in(token: &Token) -> i64 {
-        token.expires_at().unwrap().unix_timestamp() - OffsetDateTime::now_utc().unix_timestamp()
-    }
-
     async fn get_token(
         scope: &Scope,
-    ) -> Result<(Token, Instant), String> {        
+    ) -> Result<Token, String> {        
         let authentication_manager = authentication_manager().await;
         let scope_url = scope.url();
         let scopes = &[scope_url.as_str()];
         let token = authentication_manager.get_token(scopes).await
             .map_err(|err| format!("Unable to get token: {}", err))?;
 
-        info!("Token expires in {} seconds", Self::expires_in(&token));
-        Ok((token, Instant::now()))
+        info!("Got token {:?}", token);
+        Ok(token)
     }
 
     /// Call this function regularly to ensure the access token does not expire
@@ -67,7 +61,7 @@ impl AccessToken {
         // Check if it's time to try a token refresh
         {
             let token_r = self.token.read().unwrap();
-            if token_r.1.elapsed().as_secs() < Self::expires_in(&token_r.0) as u64 / 2 {
+            if !token_r.has_expired() {
                 return;
             }
 
@@ -103,6 +97,6 @@ impl AccessToken {
     /// Return an access token suitable for use in an HTTP authorization header
     pub fn get(&self) -> String {
         let token_r = self.token.read().unwrap();
-        format!("Bearer {}", token_r.0.as_str())
+        format!("Bearer {}", token_r.as_str())
     }
 }

@@ -6308,7 +6308,6 @@ dependencies = [
  "solana-storage-proto",
  "solana-transaction-status",
  "thiserror",
- "time 0.3.20",
  "tokio",
  "tonic 0.7.1",
  "zstd",
