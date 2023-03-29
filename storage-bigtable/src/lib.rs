@@ -712,6 +712,26 @@ impl LedgerStorage {
         }
     }
 
+    pub async fn get_slot_for_signature<'a>(
+        &'a self,
+        signature: Signature,
+    ) -> Result<(Slot, u32)> {
+        debug!(
+            "LedgerStorage::get_slot_for_signature request received: {:?}",
+            signature
+        );
+        inc_new_counter_debug!("storage-bigtable-query", 1);
+        let mut bigtable = self.connection.client();
+        let TransactionInfo { slot, index, .. } = bigtable
+            .get_bincode_cell::<TransactionInfo>("tx", signature.to_string())
+            .await
+            .map_err(|err| match err {
+                bigtable::Error::RowNotFound => Error::SignatureNotFound,
+                _ => err.into(),
+            })?;
+        Ok((slot, index))
+    }
+
     /// Get confirmed signatures for the provided address, in descending ledger order
     ///
     /// address: address to search for
@@ -748,11 +768,7 @@ impl LedgerStorage {
             let (first_slot, before_transaction_index) = match (before_signature, before_slot) {
                 (None, None) => (Slot::MAX, 0),
                 (Some(before_signature), None) => {
-                    let TransactionInfo { slot, index, .. } = bigtable
-                        .get_bincode_cell("tx", before_signature.to_string())
-                        .await?;
-
-                    (slot, index)
+                    self.get_slot_for_signature(before_signature).await?
                 },
                 (None, Some(before_slot)) => {
                     (before_slot, u32::MAX)
