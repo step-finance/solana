@@ -1,15 +1,13 @@
+use gcp_auth::{AuthenticationManager, Token};
 pub use goauth::scopes::Scope;
-use gcp_auth::{AuthenticationManager,Token};
 use tokio::sync::OnceCell;
 
 /// A module for managing a Google API access token
 use {
     log::*,
-    std::{
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            {Arc, RwLock},
-        },
+    std::sync::{
+        atomic::{AtomicBool, Ordering},
+        {Arc, RwLock},
     },
 };
 
@@ -43,13 +41,13 @@ impl AccessToken {
         Ok(access_token)
     }
 
-    async fn get_token(
-        scope: &Scope,
-    ) -> Result<Token, String> {        
+    async fn get_token(scope: &Scope) -> Result<Token, String> {
         let authentication_manager = authentication_manager().await;
         let scope_url = scope.url();
         let scopes = &[scope_url.as_str()];
-        let token = authentication_manager.get_token(scopes).await
+        let token = authentication_manager
+            .get_token(scopes)
+            .await
             .map_err(|err| format!("Unable to get token: {}", err))?;
 
         info!("Got token {:?}", token);

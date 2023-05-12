@@ -7,12 +7,15 @@ use {
         root_ca_certificate,
     },
     backoff::{future::retry, ExponentialBackoff},
+    futures::StreamExt,
+    futures::TryStreamExt,
     log::*,
     std::time::{Duration, Instant},
     thiserror::Error,
-    tonic::{codegen::InterceptedService, metadata::MetadataValue, transport::ClientTlsConfig, Request, Status},
-    futures::StreamExt,
-    futures::TryStreamExt
+    tonic::{
+        codegen::InterceptedService, metadata::MetadataValue, transport::ClientTlsConfig, Request,
+        Status,
+    },
 };
 
 mod google {
@@ -148,21 +151,16 @@ impl BigTableConnection {
             }
 
             Err(_) => {
-                let access_token = AccessToken::new(
-                    if read_only {
-                        Scope::BigTableDataReadOnly
-                    } else {
-                        Scope::BigTableData
-                    },
-                )
+                let access_token = AccessToken::new(if read_only {
+                    Scope::BigTableDataReadOnly
+                } else {
+                    Scope::BigTableData
+                })
                 .await
                 .map_err(Error::AccessToken)?;
 
-                let table_prefix = format!(
-                    "projects/{}/instances/{}/tables/",
-                    project,
-                    instance_name
-                );
+                let table_prefix =
+                    format!("projects/{}/instances/{}/tables/", project, instance_name);
 
                 let endpoint = {
                     let endpoint =
@@ -292,7 +290,6 @@ pub struct BigTable<F: FnMut(Request<()>) -> InterceptedRequestResult> {
 }
 
 impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
-
     fn decode_read_rows_response(
         &self,
         mut rrr: tonic::codec::Streaming<ReadRowsResponse>,
@@ -576,7 +573,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
 
         let rows = self.decode_read_rows_response(response);
         futures::pin_mut!(rows);
-        rows.try_next().await?
+        rows.try_next()
+            .await?
             .map(|a| a.1)
             .ok_or(Error::RowNotFound)
     }
@@ -692,16 +690,14 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
     where
         T: serde::de::DeserializeOwned,
     {
-        let s = self
-            .get_multi_row_data(table, keys)
-            .await?
-            .map(|row|
-                row.map(|(key, row_data)| {
-                    let key_str = key.to_string();
-                    let cell_data_result = deserialize_bincode_cell_data(&row_data, table, key_str.clone());
-                    (key_str, cell_data_result)
-                })
-            );
+        let s = self.get_multi_row_data(table, keys).await?.map(|row| {
+            row.map(|(key, row_data)| {
+                let key_str = key.to_string();
+                let cell_data_result =
+                    deserialize_bincode_cell_data(&row_data, table, key_str.clone());
+                (key_str, cell_data_result)
+            })
+        });
         Ok(s)
     }
 
@@ -729,17 +725,21 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
     {
         let s = self
             .get_multi_row_data(
-                table, 
+                table,
                 row_keys.into_iter().collect::<Vec<RowKey>>().as_slice(),
             )
             .await?
-            .map(|row|
+            .map(|row| {
                 row.and_then(|(key, row_data)| {
                     let key_str = key.to_string();
-                    let cell_data_result = deserialize_protobuf_or_bincode_cell_data(&row_data, table, key_str.clone())?;
+                    let cell_data_result = deserialize_protobuf_or_bincode_cell_data(
+                        &row_data,
+                        table,
+                        key_str.clone(),
+                    )?;
                     Ok((key_str, cell_data_result))
                 })
-            );
+            });
         Ok(s)
     }
 

@@ -675,30 +675,37 @@ impl LedgerStorage {
             signature
         );
         inc_new_counter_debug!("storage-bigtable-query", 1);
-        let mut bigtable = self.connection.client();
 
         // Figure out which block the transaction is located in
-        let TransactionInfo { slot, index, .. } = bigtable
-            .get_bincode_cell("tx", signature.to_string())
-            .await
-            .map_err(|err| match err {
-                bigtable::Error::RowNotFound => Error::SignatureNotFound,
-                _ => err.into(),
-            })?;
+        let (slot, index) = self.get_slot_for_signature(signature).await?;
+        self.get_confirmed_transaction_by_slot_index(Some(signature), slot, index).await
+    }
 
+    /// Fetch a confirmed transaction
+    pub async fn get_confirmed_transaction_by_slot_index(
+        &self,
+        signature: Option<&Signature>, //for debug logging only
+        slot: u64,
+        index: u32,
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
+        debug!(
+            "LedgerStorage::get_confirmed_transaction_by_slot_index request received: {} {}",
+            slot,
+            index,
+        );
         // Load the block and return the transaction
         let block = self.get_confirmed_block(slot).await?;
         match block.transactions.into_iter().nth(index as usize) {
             None => {
                 // report this somewhere actionable?
-                warn!("Transaction info for {} is corrupt", signature);
+                warn!("Transaction info for {} is corrupt", signature.map(|a| a.to_string()).unwrap_or_default());
                 Ok(None)
             }
             Some(tx_with_meta) => {
-                if tx_with_meta.transaction_signature() != signature {
+                if Some(tx_with_meta.transaction_signature()) != signature {
                     warn!(
                         "Transaction info or confirmed block for {} is corrupt",
-                        signature
+                        signature.map(|a| a.to_string()).unwrap_or_default()
                     );
                     Ok(None)
                 } else {
@@ -714,7 +721,7 @@ impl LedgerStorage {
 
     pub async fn get_slot_for_signature<'a>(
         &'a self,
-        signature: Signature,
+        signature: &Signature,
     ) -> Result<(Slot, u32)> {
         debug!(
             "LedgerStorage::get_slot_for_signature request received: {:?}",
@@ -768,7 +775,7 @@ impl LedgerStorage {
             let (first_slot, before_transaction_index) = match (before_signature, before_slot) {
                 (None, None) => (Slot::MAX, 0),
                 (Some(before_signature), None) => {
-                    self.get_slot_for_signature(before_signature).await?
+                    self.get_slot_for_signature(&before_signature).await?
                 },
                 (None, Some(before_slot)) => {
                     (before_slot, u32::MAX)
