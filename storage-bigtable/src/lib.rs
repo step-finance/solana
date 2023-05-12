@@ -1,5 +1,7 @@
 #![allow(clippy::integer_arithmetic)]
 
+use std::collections::HashSet;
+
 use futures::Stream;
 use itertools::Itertools;
 
@@ -615,7 +617,7 @@ impl LedgerStorage {
                 Ok((sig, Ok(TransactionInfo { slot, index, .. }))) => {
                     Ok((sig, Some((slot, index))))
                 },
-                Ok((sig, Err(e))) => {
+                Ok((sig, Err(e))) => { //I thought this hit on missing tx, but it doesn't
                     warn!("Error looking up transaction info for {}: {:?}", sig, e);
                     Ok((sig, None))
                 },
@@ -636,12 +638,18 @@ impl LedgerStorage {
 
         let txs = self.get_confirmed_transactions_by_slot_index(good_cells).await?;
         let mut good_txs: Vec<ConfirmedTransactionWithStatusMeta> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
         for (i, tx) in txs.into_iter().enumerate() {
+            seen.insert(cells[i].0.clone());
             match tx {
-                Some(t) => good_txs.push(t),
-                None => bad_cells.push(cells[i].0.to_string()),
+                Some(t) => {
+                    good_txs.push(t);
+                },
+                None => bad_cells.push(cells[i].0.clone()),
             }
         }
+        //add to bad cells any missing results
+        bad_cells.extend(keys.into_iter().filter(|k| !seen.contains(k)));
 
         Ok((good_txs, bad_cells))
     }
@@ -699,8 +707,13 @@ impl LedgerStorage {
         inc_new_counter_debug!("storage-bigtable-query", 1);
 
         // Figure out which block the transaction is located in
-        let (slot, index) = self.get_slot_for_signature(signature).await?;
-        self.get_confirmed_transaction_by_slot_index(slot, index).await
+        match self.get_slot_for_signature(signature).await {
+            Ok((slot, index)) => {
+                self.get_confirmed_transaction_by_slot_index(slot, index).await
+            }
+            Err(Error::SignatureNotFound) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     /// Fetch a confirmed transaction
