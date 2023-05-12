@@ -594,11 +594,11 @@ impl LedgerStorage {
     }
 
     // Fetches and gets a vector of confirmed transactions via a multirow fetch
-    // doesnt use streaming
+    // doesnt use streaming. Also returns as array of missing txs.
     pub async fn get_confirmed_transactions(
         &self,
         signatures: &[Signature],
-    ) -> Result<Vec<ConfirmedTransactionWithStatusMeta>> {
+    ) -> Result<(Vec<ConfirmedTransactionWithStatusMeta>, Vec<String>)> {
         debug!(
             "LedgerStorage::get_confirmed_transactions request received: {:?}",
             signatures
@@ -612,20 +612,44 @@ impl LedgerStorage {
             .get_bincode_cells::<TransactionInfo>("tx", &keys)
             .await?
             .map(|cell| match cell {
-                Ok((_sig, Ok(TransactionInfo { slot, index, .. }))) => {
-                    Ok((slot, index))
-                }
-                Err(e) | Ok((_, Err(e))) => Err(e),
+                Ok((sig, Ok(TransactionInfo { slot, index, .. }))) => {
+                    Ok((sig, Some((slot, index))))
+                },
+                Ok((sig, Err(e))) => {
+                    warn!("Error looking up transaction info for {}: {:?}", sig, e);
+                    Ok((sig, None))
+                },
+                Err(e) => Err(e),
             })
             .try_collect::<Vec<_>>().await?;
             //.await?;
-        self.get_confirmed_transactions_by_slot_index(cells).await
+        
+        let mut good_cells: Vec<(Slot, u32)> = Vec::new();
+        let mut bad_cells: Vec<String> = Vec::new();
+
+        for cell in &cells {
+            match cell {
+                (_, Some(c)) => good_cells.push(*c),
+                (s, None) => bad_cells.push(s.clone()),
+            }
+        }
+
+        let txs = self.get_confirmed_transactions_by_slot_index(good_cells).await?;
+        let mut good_txs: Vec<ConfirmedTransactionWithStatusMeta> = Vec::new();
+        for (i, tx) in txs.into_iter().enumerate() {
+            match tx {
+                Some(t) => good_txs.push(t),
+                None => bad_cells.push(cells[i].0.to_string()),
+            }
+        }
+
+        Ok((good_txs, bad_cells))
     }
 
     pub async fn get_confirmed_transactions_by_slot_index(
         &self,
         slot_indexes: Vec<(Slot, u32)>,
-    ) -> Result<Vec<ConfirmedTransactionWithStatusMeta>> {
+    ) -> Result<Vec<Option<ConfirmedTransactionWithStatusMeta>>> {
         debug!(
             "LedgerStorage::get_confirmed_transactions request received: {:?}",
             slot_indexes
@@ -646,7 +670,7 @@ impl LedgerStorage {
         // Extract transactions
         Ok(slot_indexes
             .into_iter()
-            .filter_map(|(slot, index)| {
+            .map(|(slot, index)| {
                 blocks_map.get(&slot).and_then(|block| {
                     block
                         .transactions
