@@ -1,6 +1,7 @@
 #![allow(clippy::integer_arithmetic)]
 
 use futures::Stream;
+use itertools::Itertools;
 
 use {
     crate::bigtable::RowKey,
@@ -24,7 +25,7 @@ use {
         TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
     },
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         convert::TryInto,
     },
     thiserror::Error,
@@ -609,27 +610,32 @@ impl LedgerStorage {
         let keys = signatures.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let cells = bigtable
             .get_bincode_cells::<TransactionInfo>("tx", &keys)
-            .await?;
+            .await?
+            .map(|cell| match cell {
+                Ok((_sig, Ok(TransactionInfo { slot, index, .. }))) => {
+                    Ok((slot, index))
+                }
+                Err(e) | Ok((_, Err(e))) => Err(e),
+            })
+            .try_collect::<Vec<_>>().await?;
+            //.await?;
+        self.get_confirmed_transactions_by_slot_index(cells).await
+    }
 
-        // Collect by slot
-        let mut order: Vec<(Slot, u32, String)> = Vec::new();
-        let mut slots: HashSet<Slot> = HashSet::new();
-
-        futures::pin_mut!(cells); // needed for iteration
-        while let Some(cell) = cells.next().await {
-            let cell = cell?;
-            if let (signature, Ok(TransactionInfo { slot, index, .. })) = cell {
-                order.push((slot, index, signature));
-                slots.insert(slot);
-            } 
-        }
-
-        let slots_vec = &slots.into_iter().collect::<Vec<_>>();
+    pub async fn get_confirmed_transactions_by_slot_index(
+        &self,
+        slot_indexes: Vec<(Slot, u32)>,
+    ) -> Result<Vec<ConfirmedTransactionWithStatusMeta>> {
+        debug!(
+            "LedgerStorage::get_confirmed_transactions request received: {:?}",
+            slot_indexes
+        );
+        let slots_vec = slot_indexes.iter().map(|a| a.0).unique().collect::<Vec<_>>();
         // Fetch blocks
         let blocks = self
-            .get_confirmed_blocks_with_data(slots_vec)
-            .await;
-        
+            .get_confirmed_blocks_with_data(&slots_vec) 
+            .await; 
+
         let mut blocks_map: HashMap<Slot, ConfirmedBlock> = HashMap::new();
         futures::pin_mut!(blocks); // needed for iteration
         while let Some(block) = blocks.next().await {
@@ -638,26 +644,18 @@ impl LedgerStorage {
         }
 
         // Extract transactions
-        Ok(order
+        Ok(slot_indexes
             .into_iter()
-            .filter_map(|(slot, index, signature)| {
+            .filter_map(|(slot, index)| {
                 blocks_map.get(&slot).and_then(|block| {
                     block
                         .transactions
                         .get(index as usize)
-                        .and_then(|tx_with_meta| {
-                            if tx_with_meta.transaction_signature().to_string() != *signature {
-                                warn!(
-                                    "Transaction info or confirmed block for {} is corrupt",
-                                    signature
-                                );
-                                None
-                            } else {
-                                Some(ConfirmedTransactionWithStatusMeta {
-                                    slot,
-                                    tx_with_meta: tx_with_meta.clone(),
-                                    block_time: block.block_time,
-                                })
+                        .map(|tx_with_meta| {
+                            ConfirmedTransactionWithStatusMeta {
+                                slot,
+                                tx_with_meta: tx_with_meta.clone(),
+                                block_time: block.block_time,
                             }
                         })
                 })
