@@ -676,13 +676,12 @@ impl LedgerStorage {
 
         // Figure out which block the transaction is located in
         let (slot, index) = self.get_slot_for_signature(signature).await?;
-        self.get_confirmed_transaction_by_slot_index(Some(signature), slot, index).await
+        self.get_confirmed_transaction_by_slot_index(slot, index).await
     }
 
     /// Fetch a confirmed transaction
     pub async fn get_confirmed_transaction_by_slot_index(
         &self,
-        signature: Option<&Signature>, //for debug logging only
         slot: u64,
         index: u32,
     ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
@@ -696,23 +695,15 @@ impl LedgerStorage {
         match block.transactions.into_iter().nth(index as usize) {
             None => {
                 // report this somewhere actionable?
-                warn!("Transaction info for {} is corrupt", signature.map(|a| a.to_string()).unwrap_or_default());
+                warn!("Transaction info for {:?} is corrupt", (slot, index));
                 Ok(None)
             }
             Some(tx_with_meta) => {
-                if Some(tx_with_meta.transaction_signature()) != signature {
-                    warn!(
-                        "Transaction info or confirmed block for {} is corrupt",
-                        signature.map(|a| a.to_string()).unwrap_or_default()
-                    );
-                    Ok(None)
-                } else {
-                    Ok(Some(ConfirmedTransactionWithStatusMeta {
-                        slot,
-                        tx_with_meta,
-                        block_time: block.block_time,
-                    }))
-                }
+                Ok(Some(ConfirmedTransactionWithStatusMeta {
+                    slot,
+                    tx_with_meta,
+                    block_time: block.block_time,
+                }))
             }
         }
     }
