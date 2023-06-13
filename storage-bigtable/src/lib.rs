@@ -396,7 +396,7 @@ pub struct LedgerStorageConfig {
     pub app_profile_id: String,
     pub project: String,
     pub stream_window_size: u32,
-    pub channel_window_size: u32,
+    pub connection_window_size: u32,
 }
 
 impl Default for LedgerStorageConfig {
@@ -408,7 +408,7 @@ impl Default for LedgerStorageConfig {
             app_profile_id: DEFAULT_APP_PROFILE_ID.to_string(),
             project: "none".to_string(),
             stream_window_size: DEFAULT_WINDOW_SIZE,
-            channel_window_size: DEFAULT_WINDOW_SIZE,
+            connection_window_size: DEFAULT_WINDOW_SIZE,
         }
     }
 }
@@ -424,14 +424,14 @@ impl LedgerStorage {
         timeout: Option<std::time::Duration>,
         project: String,
         stream_window_size: u32,
-        channel_window_size: u32,
+        connection_window_size: u32,
     ) -> Result<Self> {
         Self::new_with_config(LedgerStorageConfig {
             read_only,
             timeout,
             project,
             stream_window_size,
-            channel_window_size,
+            connection_window_size,
             ..LedgerStorageConfig::default()
         })
         .await
@@ -445,7 +445,7 @@ impl LedgerStorage {
             app_profile_id,
             project,
             stream_window_size,
-            channel_window_size,
+            connection_window_size,
         } = config;
         let connection = bigtable::BigTableConnection::new(
             instance_name.as_str(),
@@ -454,7 +454,7 @@ impl LedgerStorage {
             read_only,
             timeout,
             stream_window_size,
-            channel_window_size,
+            connection_window_size,
         )
         .await?;
         Ok(Self { connection })
