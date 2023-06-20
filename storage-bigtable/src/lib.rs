@@ -237,6 +237,8 @@ impl From<StoredConfirmedBlockTransactionStatusMeta> for TransactionStatusMeta {
             fee,
             pre_balances,
             post_balances,
+            pre_datum: vec![],
+            post_datum: vec![],
             inner_instructions: None,
             log_messages: None,
             pre_token_balances: None,
