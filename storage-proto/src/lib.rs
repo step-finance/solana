@@ -200,6 +200,8 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
             fee,
             pre_balances,
             post_balances,
+            pre_datum: vec![],
+            post_datum: vec![],
             inner_instructions,
             log_messages,
             pre_token_balances: pre_token_balances
@@ -231,6 +233,7 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
             loaded_addresses,
             return_data,
             compute_units_consumed,
+            ..
         } = value;
 
         if !loaded_addresses.is_empty() {
