@@ -200,8 +200,8 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
             fee,
             pre_balances,
             post_balances,
-            pre_datum: vec![],
-            post_datum: vec![],
+            pre_datum: None,
+            post_datum: None,
             inner_instructions,
             log_messages,
             pre_token_balances: pre_token_balances
