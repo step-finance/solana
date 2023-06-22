@@ -42,7 +42,7 @@ use {
     solana_runtime::{
         bank::{
             Bank, CommitTransactionCounts, LoadAndExecuteTransactionsOutput,
-            TransactionBalancesSet, TransactionCheckResult,
+            TransactionBalancesSet, TransactionDatumSet, TransactionCheckResult,
         },
         bank_forks::BankForks,
         bank_utils,
@@ -1381,16 +1381,16 @@ impl BankingStage {
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
         let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
-        let ((pre_balances, pre_token_balances), collect_balances_time) = measure!(
+        let ((pre_balances, pre_datum, pre_token_balances), collect_balances_time) = measure!(
             {
                 // Use a shorter maximum age when adding transactions into the pipeline.  This will reduce
                 // the likelihood of any single thread getting starved and processing old ids.
                 // TODO: Banking stage threads should be prioritized to complete faster then this queue
                 // expires.
-                let pre_balances = if transaction_status_sender.is_some() {
-                    bank.collect_balances(batch)
+                let (pre_balances, pre_datum) = if transaction_status_sender.is_some() {
+                    bank.collect_balances_and_datum(batch)
                 } else {
-                    vec![]
+                    (vec![], vec![])
                 };
 
                 let pre_token_balances = if transaction_status_sender.is_some() {
@@ -1399,7 +1399,7 @@ impl BankingStage {
                     vec![]
                 };
 
-                (pre_balances, pre_token_balances)
+                (pre_balances, pre_datum, pre_token_balances)
             },
             "collect_balances",
         );
@@ -1537,7 +1537,7 @@ impl BankingStage {
                     );
                     if let Some(transaction_status_sender) = transaction_status_sender {
                         let txs = batch.sanitized_transactions().to_vec();
-                        let post_balances = bank.collect_balances(batch);
+                        let (post_balances, post_datum) = bank.collect_balances_and_datum(batch);
                         let post_token_balances =
                             collect_token_balances(bank, batch, &mut mint_decimals);
                         let mut transaction_index = starting_transaction_index.unwrap_or_default();
@@ -1559,6 +1559,7 @@ impl BankingStage {
                             txs,
                             tx_results.execution_results,
                             TransactionBalancesSet::new(pre_balances, post_balances),
+                            TransactionDatumSet::new(pre_datum, post_datum),
                             TransactionTokenBalancesSet::new(
                                 pre_token_balances,
                                 post_token_balances,
