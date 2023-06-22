@@ -501,7 +501,7 @@ impl TransactionDatumSet {
         }
     }
 }
-pub type TransactionDatum = Vec<Vec<Vec<u8>>>;
+pub type TransactionDatum = Vec<Vec<Option<Vec<u8>>>>;
 
 /// An ordered list of compiled instructions that were invoked during a
 /// transaction instruction
@@ -4016,7 +4016,7 @@ impl Bank {
         let mut datum: TransactionDatum = vec![];
         for transaction in batch.sanitized_transactions() {
             let mut transaction_balances: Vec<u64> = vec![];
-            let mut transaction_datum: Vec<Vec<u8>> = vec![];
+            let mut transaction_datum: Vec<Option<Vec<u8>>> = vec![];
             for account_key in transaction.message().account_keys().iter() {
                 let balance_and_data = self.get_balance_and_data(account_key);
                 transaction_balances.push(balance_and_data.0);
@@ -6197,12 +6197,12 @@ impl Bank {
         account.lamports()
     }
 
-    pub fn read_data(account: &AccountSharedData, max_size: usize) -> Vec<u8> {
+    pub fn read_data(account: &AccountSharedData) -> Option<Vec<u8>> {
         let data = account.data();
-        if data.len() > max_size || account.executable() {
-            vec![]
+        if data.len() > STEP_TX_DATUM_MAX_SIZE || account.executable() {
+            None
         } else {
-            data.to_vec()
+            Some(data.to_vec())
         }
     }
     /// Each program would need to be able to introspect its own state
@@ -6212,15 +6212,15 @@ impl Bank {
             .map(|x| Self::read_balance(&x))
             .unwrap_or(0)
     }
-    pub fn get_balance_and_data(&self, pubkey: &Pubkey) -> (u64, Vec<u8>) {
+    pub fn get_balance_and_data(&self, pubkey: &Pubkey) -> (u64, Option<Vec<u8>>) {
         self.get_account(pubkey)
             .map(|x| {
                 (
                     Self::read_balance(&x),
-                    Self::read_data(&x, STEP_TX_DATUM_MAX_SIZE),
+                    Self::read_data(&x),
                 )
             })
-            .unwrap_or((0, vec![]))
+            .unwrap_or((0, None))
     }
 
     /// Compute all the parents of the bank in order
