@@ -6197,9 +6197,9 @@ impl Bank {
         account.lamports()
     }
 
-    pub fn read_data(account: &AccountSharedData) -> Option<Vec<u8>> {
+    pub fn read_data(pubkey: &Pubkey, account: &AccountSharedData) -> Option<Vec<u8>> {
         let data = account.data();
-        if data.len() > STEP_TX_DATUM_MAX_SIZE || account.executable() {
+        if data.len() > STEP_TX_DATUM_MAX_SIZE || account.executable() || pubkey == token_program {
             None
         } else {
             Some(data.to_vec())
@@ -6217,7 +6217,7 @@ impl Bank {
             .map(|x| {
                 (
                     Self::read_balance(&x),
-                    Self::read_data(&x),
+                    Self::read_data(pubkey, &x),
                 )
             })
             .unwrap_or((0, None))
