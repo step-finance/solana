@@ -854,6 +854,7 @@ impl PartialEq for Bank {
             accounts_data_size_delta_off_chain: _,
             fee_structure: _,
             incremental_snapshot_persistence: _,
+            token_programs: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this ParitalEq is accordingly updated.
@@ -1108,6 +1109,9 @@ pub struct Bank {
     pub fee_structure: FeeStructure,
 
     pub incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
+
+    /// the token programs
+    pub token_programs: HashSet<Pubkey>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1296,6 +1300,7 @@ impl Bank {
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             fee_structure: FeeStructure::default(),
+            token_programs: Self::get_token_programs(),
         };
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
@@ -1622,6 +1627,7 @@ impl Bank {
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             fee_structure: parent.fee_structure.clone(),
+            token_programs: Self::get_token_programs(),
         };
 
         let (_, ancestors_time) = measure!(
@@ -1818,6 +1824,13 @@ impl Bank {
         new
     }
 
+    pub fn get_token_programs() -> HashSet<Pubkey> {
+        let mut set = HashSet::<Pubkey>::new();
+        set.insert(Pubkey::try_from("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap());
+        set.insert(Pubkey::try_from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap());
+        set
+    }
+
     pub fn byte_limit_for_scans(&self) -> Option<usize> {
         self.rc
             .accounts
@@ -1965,6 +1978,7 @@ impl Bank {
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
             fee_structure: FeeStructure::default(),
+            token_programs: Self::get_token_programs(),
         };
         bank.finish_init(
             genesis_config,
@@ -6197,9 +6211,15 @@ impl Bank {
         account.lamports()
     }
 
-    pub fn read_data(pubkey: &Pubkey, account: &AccountSharedData) -> Option<Vec<u8>> {
+    pub fn read_data(&self, account: &AccountSharedData) -> Option<Vec<u8>> {
         let data = account.data();
-        if data.len() > STEP_TX_DATUM_MAX_SIZE || account.executable() || pubkey == token_program {
+        //no data for
+        //large accounts
+        if data.len() > STEP_TX_DATUM_MAX_SIZE 
+            //executable accounts
+            || account.executable() 
+            //token program accounts
+            || self.token_programs.contains(account.owner()) {
             None
         } else {
             Some(data.to_vec())
@@ -6217,7 +6237,7 @@ impl Bank {
             .map(|x| {
                 (
                     Self::read_balance(&x),
-                    Self::read_data(pubkey, &x),
+                    Self::read_data(self, &x),
                 )
             })
             .unwrap_or((0, None))
