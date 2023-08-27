@@ -7,6 +7,8 @@ use itertools::Itertools;
 
 use {
     crate::bigtable::RowKey,
+    futures::StreamExt,
+    futures::TryStreamExt,
     log::*,
     serde::{Deserialize, Serialize},
     solana_metrics::{datapoint_info, inc_new_counter_debug},
@@ -26,14 +28,9 @@ use {
         TransactionConfirmationStatus, TransactionStatus, TransactionStatusMeta,
         TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
     },
-    std::{
-        collections::HashMap,
-        convert::TryInto,
-    },
+    std::{collections::HashMap, convert::TryInto},
     thiserror::Error,
     tokio::task::JoinError,
-    futures::StreamExt,
-    futures::TryStreamExt,
 };
 
 #[macro_use]
@@ -397,6 +394,7 @@ pub struct LedgerStorageConfig {
     pub project: String,
     pub stream_window_size: u32,
     pub connection_window_size: u32,
+    pub credential_type: CredentialType,
 }
 
 impl Default for LedgerStorageConfig {
@@ -409,6 +407,7 @@ impl Default for LedgerStorageConfig {
             project: "none".to_string(),
             stream_window_size: DEFAULT_WINDOW_SIZE,
             connection_window_size: DEFAULT_WINDOW_SIZE,
+            credential_type: CredentialType::Filepath(None),
         }
     }
 }
@@ -425,6 +424,7 @@ impl LedgerStorage {
         project: String,
         stream_window_size: u32,
         connection_window_size: u32,
+        credential_path: Option<String>,
     ) -> Result<Self> {
         Self::new_with_config(LedgerStorageConfig {
             read_only,
@@ -432,6 +432,7 @@ impl LedgerStorage {
             project,
             stream_window_size,
             connection_window_size,
+            credential_type: CredentialType::Filepath(credential_path),
             ..LedgerStorageConfig::default()
         })
         .await
@@ -446,6 +447,7 @@ impl LedgerStorage {
             project,
             stream_window_size,
             connection_window_size,
+            credential_type,
         } = config;
         let connection = bigtable::BigTableConnection::new(
             instance_name.as_str(),
@@ -455,6 +457,7 @@ impl LedgerStorage {
             timeout,
             stream_window_size,
             connection_window_size,
+            credential_type,
         )
         .await?;
         Ok(Self { connection })
@@ -483,9 +486,11 @@ impl LedgerStorage {
     ///
     /// start_slot: slot to start the search from (inclusive)
     /// limit: stop after this many slots have been found
-    pub async fn get_confirmed_blocks<'a>(&'a self, start_slot: Slot, limit: usize) 
-        -> impl Stream<Item = Result<Slot>> + 'a
-    {
+    pub async fn get_confirmed_blocks<'a>(
+        &'a self,
+        start_slot: Slot,
+        limit: usize,
+    ) -> impl Stream<Item = Result<Slot>> + 'a {
         debug!(
             "LedgerStorage::get_confirmed_blocks request received: {:?} {:?}",
             start_slot, limit
@@ -545,14 +550,14 @@ impl LedgerStorage {
             let data = data
                 .map_err(|e| Error::BigTableError(e))
                 .map(
-                    |result| 
+                    |result|
                         result.and_then(|(row_key, block_cell_data): (
                             RowKey,
                             bigtable::CellData<StoredConfirmedBlock, generated::ConfirmedBlock>,
                         )| {
                             let block: ConfirmedBlock = match block_cell_data {
                                 bigtable::CellData::Bincode(block) => block.into(),
-                                bigtable::CellData::Protobuf(block) => 
+                                bigtable::CellData::Protobuf(block) =>
                                     block.try_into()
                                         .map_err(|e: Box<bincode::ErrorKind>| Error::BigTableError(bigtable::Error::ObjectCorrupt(e.to_string()))
                                 )?
@@ -631,16 +636,18 @@ impl LedgerStorage {
             .map(|cell| match cell {
                 Ok((sig, Ok(TransactionInfo { slot, index, .. }))) => {
                     Ok((sig, Some((slot, index))))
-                },
-                Ok((sig, Err(e))) => { //I thought this hit on missing tx, but it doesn't
+                }
+                Ok((sig, Err(e))) => {
+                    //I thought this hit on missing tx, but it doesn't
                     warn!("Error looking up transaction info for {}: {:?}", sig, e);
                     Ok((sig, None))
-                },
+                }
                 Err(e) => Err(e),
             })
-            .try_collect::<Vec<_>>().await?;
-            //.await?;
-        
+            .try_collect::<Vec<_>>()
+            .await?;
+        //.await?;
+
         let mut good_cells: Vec<(Slot, u32)> = Vec::new();
         let mut bad_cells: Vec<String> = Vec::new();
 
@@ -651,7 +658,9 @@ impl LedgerStorage {
             }
         }
 
-        let txs = self.get_confirmed_transactions_by_slot_index(good_cells).await?;
+        let txs = self
+            .get_confirmed_transactions_by_slot_index(good_cells)
+            .await?;
         let mut good_txs: Vec<ConfirmedTransactionWithStatusMeta> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for (i, tx) in txs.into_iter().enumerate() {
@@ -659,7 +668,7 @@ impl LedgerStorage {
             match tx {
                 Some(t) => {
                     good_txs.push(t);
-                },
+                }
                 None => bad_cells.push(cells[i].0.clone()),
             }
         }
@@ -677,11 +686,13 @@ impl LedgerStorage {
             "LedgerStorage::get_confirmed_transactions request received: {:?}",
             slot_indexes
         );
-        let slots_vec = slot_indexes.iter().map(|a| a.0).unique().collect::<Vec<_>>();
+        let slots_vec = slot_indexes
+            .iter()
+            .map(|a| a.0)
+            .unique()
+            .collect::<Vec<_>>();
         // Fetch blocks
-        let blocks = self
-            .get_confirmed_blocks_with_data(&slots_vec) 
-            .await; 
+        let blocks = self.get_confirmed_blocks_with_data(&slots_vec).await;
 
         let mut blocks_map: HashMap<Slot, ConfirmedBlock> = HashMap::new();
         futures::pin_mut!(blocks); // needed for iteration
@@ -695,16 +706,13 @@ impl LedgerStorage {
             .into_iter()
             .map(|(slot, index)| {
                 blocks_map.get(&slot).and_then(|block| {
-                    block
-                        .transactions
-                        .get(index as usize)
-                        .map(|tx_with_meta| {
-                            ConfirmedTransactionWithStatusMeta {
-                                slot,
-                                tx_with_meta: tx_with_meta.clone(),
-                                block_time: block.block_time,
-                            }
-                        })
+                    block.transactions.get(index as usize).map(|tx_with_meta| {
+                        ConfirmedTransactionWithStatusMeta {
+                            slot,
+                            tx_with_meta: tx_with_meta.clone(),
+                            block_time: block.block_time,
+                        }
+                    })
                 })
             })
             .collect::<Vec<_>>())
@@ -724,7 +732,8 @@ impl LedgerStorage {
         // Figure out which block the transaction is located in
         match self.get_slot_for_signature(signature).await {
             Ok((slot, index)) => {
-                self.get_confirmed_transaction_by_slot_index(slot, index).await
+                self.get_confirmed_transaction_by_slot_index(slot, index)
+                    .await
             }
             Err(Error::SignatureNotFound) => Ok(None),
             Err(err) => Err(err),
@@ -739,8 +748,7 @@ impl LedgerStorage {
     ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         debug!(
             "LedgerStorage::get_confirmed_transaction_by_slot_index request received: {} {}",
-            slot,
-            index,
+            slot, index,
         );
         // Load the block and return the transaction
         let block = self.get_confirmed_block(slot).await?;
@@ -750,13 +758,11 @@ impl LedgerStorage {
                 warn!("Transaction info for {:?} is corrupt", (slot, index));
                 Ok(None)
             }
-            Some(tx_with_meta) => {
-                Ok(Some(ConfirmedTransactionWithStatusMeta {
-                    slot,
-                    tx_with_meta,
-                    block_time: block.block_time,
-                }))
-            }
+            Some(tx_with_meta) => Ok(Some(ConfirmedTransactionWithStatusMeta {
+                slot,
+                tx_with_meta,
+                block_time: block.block_time,
+            })),
         }
     }
 
@@ -791,11 +797,14 @@ impl LedgerStorage {
         address: Pubkey,
         before_signature: Option<Signature>,
         before_slot: Option<Slot>,
-    ) -> Result<impl Stream<Item = Result<(
-            ConfirmedTransactionStatusWithSignature,
-            u32, /*slot index*/
-        )>> + 'a>
-    {
+    ) -> Result<
+        impl Stream<
+                Item = Result<(
+                    ConfirmedTransactionStatusWithSignature,
+                    u32, /*slot index*/
+                )>,
+            > + 'a,
+    > {
         if before_slot.is_some() && before_signature.is_some() {
             return Err(Error::ArgumentError(
                 "before_slot and before_signature cannot be used together".to_string(),
@@ -1017,7 +1026,6 @@ impl LedgerStorage {
         );
         Ok(())
     }
-
 }
 
 #[cfg(test)]

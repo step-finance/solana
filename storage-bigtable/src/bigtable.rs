@@ -37,6 +37,8 @@ mod google {
 use futures::Stream;
 use google::bigtable::v2::*;
 
+use crate::CredentialType;
+
 pub type RowKey = String;
 pub type RowData = Vec<(CellName, CellValue)>;
 pub type RowDataSlice<'a> = &'a [(CellName, CellValue)];
@@ -136,6 +138,7 @@ impl BigTableConnection {
         timeout: Option<Duration>,
         stream_window_size: u32,
         connection_window_size: u32,
+        credential_type: CredentialType,
     ) -> Result<Self> {
         info!("using connection window size: {}", connection_window_size);
         info!("using stream window size: {}", stream_window_size);
@@ -156,11 +159,14 @@ impl BigTableConnection {
             }
 
             Err(_) => {
-                let access_token = AccessToken::new(if read_only {
-                    Scope::BigTableDataReadOnly
-                } else {
-                    Scope::BigTableData
-                })
+                let access_token = AccessToken::new(
+                    if read_only {
+                        Scope::BigTableDataReadOnly
+                    } else {
+                        Scope::BigTableData
+                    },
+                    credential_type,
+                )
                 .await
                 .map_err(Error::AccessToken)?;
 
