@@ -817,6 +817,7 @@ impl PartialEq for Bank {
             loaded_programs_cache: _,
             check_program_modification_slot: _,
             epoch_reward_status: _,
+            token_programs: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -1089,6 +1090,8 @@ pub struct Bank {
     bank_freeze_or_destruction_incremented: AtomicBool,
 
     epoch_reward_status: EpochRewardStatus,
+    /// the token programs
+    pub token_programs: HashSet<Pubkey>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1310,6 +1313,7 @@ impl Bank {
             loaded_programs_cache: Arc::<RwLock<LoadedPrograms>>::default(),
             check_program_modification_slot: false,
             epoch_reward_status: EpochRewardStatus::default(),
+            token_programs: Self::get_token_programs(),
         };
 
         bank.bank_created();
@@ -1623,6 +1627,7 @@ impl Bank {
             loaded_programs_cache: parent.loaded_programs_cache.clone(),
             check_program_modification_slot: false,
             epoch_reward_status: parent.epoch_reward_status.clone(),
+            token_programs: Self::get_token_programs(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1771,6 +1776,13 @@ impl Bank {
             },
             rewards_metrics,
         );
+    }
+
+    pub fn get_token_programs() -> HashSet<Pubkey> {
+        let mut set = HashSet::<Pubkey>::new();
+        set.insert(Pubkey::try_from("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap());
+        set.insert(Pubkey::try_from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap());
+        set
     }
 
     pub fn byte_limit_for_scans(&self) -> Option<usize> {
@@ -1965,6 +1977,7 @@ impl Bank {
             loaded_programs_cache: Arc::<RwLock<LoadedPrograms>>::default(),
             check_program_modification_slot: false,
             epoch_reward_status: EpochRewardStatus::default(),
+            token_programs: Self::get_token_programs(),
         };
         bank.bank_created();
 
@@ -6009,9 +6022,15 @@ impl Bank {
         account.lamports()
     }
 
-    pub fn read_data(account: &AccountSharedData) -> Option<Vec<u8>> {
+    pub fn read_data(&self, account: &AccountSharedData) -> Option<Vec<u8>> {
         let data = account.data();
-        if data.len() > STEP_TX_DATUM_MAX_SIZE || account.executable() {
+        //no data for
+        //large accounts
+        if data.len() > STEP_TX_DATUM_MAX_SIZE 
+            //executable accounts
+            || account.executable() 
+            //token program accounts
+            || self.token_programs.contains(account.owner()) {
             None
         } else {
             Some(data.to_vec())
@@ -6029,7 +6048,7 @@ impl Bank {
             .map(|x| {
                 (
                     Self::read_balance(&x),
-                    Self::read_data(&x),
+                    Self::read_data(self, &x),
                 )
             })
             .unwrap_or((0, None))
