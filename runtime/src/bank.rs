@@ -211,6 +211,8 @@ pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
+pub const STEP_TX_DATUM_MAX_SIZE: usize = 2_000_000;
+
 #[derive(Default)]
 struct RentMetrics {
     hold_range_us: AtomicU64,
@@ -421,6 +423,22 @@ impl TransactionBalancesSet {
     }
 }
 pub type TransactionBalances = Vec<Vec<u64>>;
+
+pub struct TransactionDatumSet {
+    pub pre_datum: TransactionDatum,
+    pub post_datum: TransactionDatum,
+}
+
+impl TransactionDatumSet {
+    pub fn new(pre_datum: TransactionDatum, post_datum: TransactionDatum) -> Self {
+        assert_eq!(pre_datum.len(), post_datum.len());
+        Self {
+            pre_datum,
+            post_datum,
+        }
+    }
+}
+pub type TransactionDatum = Vec<Vec<Option<Vec<u8>>>>;
 
 /// An ordered list of compiled instructions that were invoked during a
 /// transaction instruction
@@ -3913,6 +3931,23 @@ impl Bank {
         balances
     }
 
+    pub fn collect_balances_and_datum(&self, batch: &TransactionBatch) -> (TransactionBalances, TransactionDatum) {
+        let mut balances: TransactionBalances = vec![];
+        let mut datum: TransactionDatum = vec![];
+        for transaction in batch.sanitized_transactions() {
+            let mut transaction_balances: Vec<u64> = vec![];
+            let mut transaction_datum: Vec<Option<Vec<u8>>> = vec![];
+            for account_key in transaction.message().account_keys().iter() {
+                let balance_and_data = self.get_balance_and_data(account_key);
+                transaction_balances.push(balance_and_data.0);
+                transaction_datum.push(balance_and_data.1);
+            }
+            balances.push(transaction_balances);
+            datum.push(transaction_datum);
+        }
+        (balances, datum)
+    }
+
     fn program_modification_slot(&self, pubkey: &Pubkey) -> Result<Slot> {
         let program = self
             .get_account_with_fixed_root(pubkey)
@@ -5802,11 +5837,11 @@ impl Bank {
         enable_return_data_recording: bool,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (TransactionResults, TransactionBalancesSet) {
-        let pre_balances = if collect_balances {
-            self.collect_balances(batch)
+    ) -> (TransactionResults, TransactionBalancesSet, TransactionDatumSet) {
+        let (pre_balances, pre_datum) = if collect_balances {
+            self.collect_balances_and_datum(batch)
         } else {
-            vec![]
+            (vec![], vec![])
         };
 
         let LoadAndExecuteTransactionsOutput {
@@ -5846,14 +5881,15 @@ impl Bank {
             },
             timings,
         );
-        let post_balances = if collect_balances {
-            self.collect_balances(batch)
+        let (post_balances, post_datum) = if collect_balances {
+            self.collect_balances_and_datum(batch)
         } else {
-            vec![]
+            (vec![], vec![])
         };
         (
             results,
             TransactionBalancesSet::new(pre_balances, post_balances),
+            TransactionDatumSet::new(pre_datum, post_datum),
         )
     }
 
@@ -5972,12 +6008,31 @@ impl Bank {
     pub fn read_balance(account: &AccountSharedData) -> u64 {
         account.lamports()
     }
+
+    pub fn read_data(account: &AccountSharedData) -> Option<Vec<u8>> {
+        let data = account.data();
+        if data.len() > STEP_TX_DATUM_MAX_SIZE || account.executable() {
+            None
+        } else {
+            Some(data.to_vec())
+        }
+    }
     /// Each program would need to be able to introspect its own state
     /// this is hard-coded to the Budget language
     pub fn get_balance(&self, pubkey: &Pubkey) -> u64 {
         self.get_account(pubkey)
             .map(|x| Self::read_balance(&x))
             .unwrap_or(0)
+    }
+    pub fn get_balance_and_data(&self, pubkey: &Pubkey) -> (u64, Option<Vec<u8>>) {
+        self.get_account(pubkey)
+            .map(|x| {
+                (
+                    Self::read_balance(&x),
+                    Self::read_data(&x),
+                )
+            })
+            .unwrap_or((0, None))
     }
 
     /// Compute all the parents of the bank in order
