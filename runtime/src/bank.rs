@@ -817,7 +817,7 @@ impl PartialEq for Bank {
             loaded_programs_cache: _,
             check_program_modification_slot: _,
             epoch_reward_status: _,
-            token_programs: _,
+            dataum_excluded_programs: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -1090,8 +1090,8 @@ pub struct Bank {
     bank_freeze_or_destruction_incremented: AtomicBool,
 
     epoch_reward_status: EpochRewardStatus,
-    /// the token programs
-    pub token_programs: HashSet<Pubkey>,
+    /// programs that will not have their account data sent to geyser
+    pub dataum_excluded_programs: HashSet<Pubkey>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1313,7 +1313,7 @@ impl Bank {
             loaded_programs_cache: Arc::<RwLock<LoadedPrograms>>::default(),
             check_program_modification_slot: false,
             epoch_reward_status: EpochRewardStatus::default(),
-            token_programs: Self::get_token_programs(),
+            dataum_excluded_programs: Self::get_dataum_excluded_programs(),
         };
 
         bank.bank_created();
@@ -1627,7 +1627,7 @@ impl Bank {
             loaded_programs_cache: parent.loaded_programs_cache.clone(),
             check_program_modification_slot: false,
             epoch_reward_status: parent.epoch_reward_status.clone(),
-            token_programs: Self::get_token_programs(),
+            dataum_excluded_programs: Self::get_dataum_excluded_programs(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1778,10 +1778,14 @@ impl Bank {
         );
     }
 
-    pub fn get_token_programs() -> HashSet<Pubkey> {
+    fn get_dataum_excluded_programs() -> HashSet<Pubkey> {
         let mut set = HashSet::<Pubkey>::new();
+        //token
         set.insert(Pubkey::try_from("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap());
+        //token2022
         set.insert(Pubkey::try_from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap());
+        //bpf loader!
+        set.insert(Pubkey::try_from("BPFLoaderUpgradeab1e11111111111111111111111").unwrap());
         set
     }
 
@@ -1977,7 +1981,7 @@ impl Bank {
             loaded_programs_cache: Arc::<RwLock<LoadedPrograms>>::default(),
             check_program_modification_slot: false,
             epoch_reward_status: EpochRewardStatus::default(),
-            token_programs: Self::get_token_programs(),
+            dataum_excluded_programs: Self::get_dataum_excluded_programs(),
         };
         bank.bank_created();
 
@@ -6030,7 +6034,7 @@ impl Bank {
             //executable accounts
             || account.executable() 
             //token program accounts
-            || self.token_programs.contains(account.owner()) {
+            || self.dataum_excluded_programs.contains(account.owner()) {
             None
         } else {
             Some(data.to_vec())
