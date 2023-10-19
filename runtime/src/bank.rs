@@ -211,7 +211,7 @@ pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
-pub const STEP_TX_DATUM_MAX_SIZE: usize = 2_000_000;
+pub const STEP_TX_DATUM_MAX_SIZE: usize = 1_000_000;
 
 #[derive(Default)]
 struct RentMetrics {
@@ -1091,7 +1091,7 @@ pub struct Bank {
 
     epoch_reward_status: EpochRewardStatus,
     /// programs that will not have their account data sent to geyser
-    pub dataum_excluded_programs: HashSet<Pubkey>,
+    pub dataum_excluded_programs: (HashSet<Pubkey>, HashSet<Pubkey>),
 }
 
 struct VoteWithStakeDelegations {
@@ -1778,15 +1778,37 @@ impl Bank {
         );
     }
 
-    fn get_dataum_excluded_programs() -> HashSet<Pubkey> {
-        let mut set = HashSet::<Pubkey>::new();
+    /// programs that we don't need the data for
+    /// both the owner and the account itself are compared
+    fn get_dataum_excluded_programs() -> (HashSet<Pubkey>, HashSet<Pubkey>) {
+        let mut token_set = HashSet::<Pubkey>::new();
         //token
-        set.insert(Pubkey::try_from("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap());
+        token_set.insert(Pubkey::try_from("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap());
+
+        //my logic for detecting and only including mints doesn't apply to 2022
         //token2022
-        set.insert(Pubkey::try_from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap());
-        //bpf loader!
-        set.insert(Pubkey::try_from("BPFLoaderUpgradeab1e11111111111111111111111").unwrap());
-        set
+        //token_set.insert(Pubkey::try_from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap());
+
+        let mut other_set = HashSet::<Pubkey>::new();
+        //bpf loader
+        other_set.insert(Pubkey::try_from("BPFLoaderUpgradeab1e11111111111111111111111").unwrap());
+        //voting
+        other_set.insert(Pubkey::try_from("Vote111111111111111111111111111111111111111").unwrap());
+        //address lookups
+        other_set.insert(Pubkey::try_from("AddressLookupTab1e1111111111111111111111111").unwrap());
+        //system
+        other_set.insert(Pubkey::try_from("11111111111111111111111111111111").unwrap());
+        //sysvars
+        other_set.insert(Pubkey::try_from("SysvarEpochSchedu1e111111111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("SysvarFees111111111111111111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("Sysvar1nstructions1111111111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("SysvarRecentB1ockHashes11111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("SysvarRent111111111111111111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("SysvarS1otHashes111111111111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("SysvarStakeHistory1111111111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("SysvarEpochRewards1111111111111111111111111").unwrap());
+        other_set.insert(Pubkey::try_from("SysvarLastRestartS1ot1111111111111111111111").unwrap());
+        (token_set, other_set)
     }
 
     pub fn byte_limit_for_scans(&self) -> Option<usize> {
@@ -6026,15 +6048,20 @@ impl Bank {
         account.lamports()
     }
 
-    pub fn read_data(&self, account: &AccountSharedData) -> Option<Vec<u8>> {
+    pub fn read_data(&self, key: &Pubkey, account: &AccountSharedData) -> Option<Vec<u8>> {
         let data = account.data();
+        let owner = account.owner();
         //no data for
         //large accounts
         if data.len() > STEP_TX_DATUM_MAX_SIZE 
             //executable accounts
             || account.executable() 
-            //token program accounts
-            || self.dataum_excluded_programs.contains(account.owner()) {
+            //exclude token MINT accounts
+            || (self.dataum_excluded_programs.0.contains(owner) && data.len() == 82)
+            //exclude by owner
+            || self.dataum_excluded_programs.1.contains(owner)
+            //exclude by key
+            || self.dataum_excluded_programs.1.contains(key) {
             None
         } else {
             Some(data.to_vec())
@@ -6052,7 +6079,7 @@ impl Bank {
             .map(|x| {
                 (
                     Self::read_balance(&x),
-                    Self::read_data(self, &x),
+                    Self::read_data(self, pubkey, &x),
                 )
             })
             .unwrap_or((0, None))
