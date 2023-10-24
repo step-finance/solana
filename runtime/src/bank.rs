@@ -6056,8 +6056,8 @@ impl Bank {
         if data.len() > STEP_TX_DATUM_MAX_SIZE 
             //executable accounts
             || account.executable() 
-            //exclude token MINT accounts
-            || (self.dataum_excluded_programs.0.contains(owner) && data.len() == 82)
+            //exclude token program NON MINT accounts
+            || (self.dataum_excluded_programs.0.contains(owner) && data.len() != 82)
             //exclude by owner
             || self.dataum_excluded_programs.1.contains(owner)
             //exclude by key
