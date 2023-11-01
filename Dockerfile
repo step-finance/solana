@@ -6,6 +6,9 @@ FROM base as builder
 WORKDIR /solana
 COPY . .
 RUN cargo build --release
+RUN cp -r ./target/release/* /usr/local/bin
+WORKDIR /
+RUN rm -r solana
 
-FROM base as release
-COPY --from=builder /solana/target/release /solana
+# Want this line? Can run a quick instance with `docker run`
+CMD ["solana-test-validator"]
