@@ -1,14 +1,14 @@
-FROM rust:1.69-bullseye as base
+FROM rust:1.69-bullseye as builder
 RUN apt-get update
 RUN apt-get install -y libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler
-
-FROM base as builder
-WORKDIR /solana
+WORKDIR /solana-build
 COPY . .
 RUN cargo build --release
-RUN cp -r ./target/release/* /usr/local/bin
-WORKDIR /
-RUN rm -r solana
 
-# Want this line? Can run a quick instance with `docker run`
-CMD ["solana-test-validator"]
+FROM debian:bullseye-20230522 as runtime
+RUN apt-get update
+RUN apt-get install -y bzip2
+COPY --from=builder --chmod=700 /solana-build/target/release /usr/local/bin
+
+WORKDIR /solana
+ENTRYPOINT ["solana-test-validator"]
