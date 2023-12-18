@@ -63,6 +63,7 @@ use {
         inline_spl_token,
         message_processor::MessageProcessor,
         partitioned_rewards::PartitionedEpochRewardsConfig,
+        program_inclusions::{PreOrPostDatum, ProgramDatumInclusions},
         rent_collector::{CollectedInfo, RentCollector},
         rent_debits::RentDebits,
         runtime_config::RuntimeConfig,
@@ -210,8 +211,6 @@ mod transaction_account_state_info;
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
-
-pub const STEP_TX_DATUM_MAX_SIZE: usize = 2_500_000;
 
 #[derive(Default)]
 struct RentMetrics {
@@ -817,7 +816,7 @@ impl PartialEq for Bank {
             loaded_programs_cache: _,
             check_program_modification_slot: _,
             epoch_reward_status: _,
-            dataum_excluded_programs: _,
+            program_datum_inclusions: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -1090,8 +1089,8 @@ pub struct Bank {
     bank_freeze_or_destruction_incremented: AtomicBool,
 
     epoch_reward_status: EpochRewardStatus,
-    /// programs that will not have their account data sent to geyser
-    pub dataum_excluded_programs: (HashSet<Pubkey>, HashSet<Pubkey>),
+    /// programs that will have their account data sent to geyser
+    pub program_datum_inclusions: Arc<ProgramDatumInclusions>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1313,7 +1312,7 @@ impl Bank {
             loaded_programs_cache: Arc::<RwLock<LoadedPrograms>>::default(),
             check_program_modification_slot: false,
             epoch_reward_status: EpochRewardStatus::default(),
-            dataum_excluded_programs: Self::get_dataum_excluded_programs(),
+            program_datum_inclusions: Arc::<ProgramDatumInclusions>::default(),
         };
 
         bank.bank_created();
@@ -1385,6 +1384,7 @@ impl Bank {
             exit,
         );
         let mut bank = Self::default_with_accounts(accounts);
+        bank.program_datum_inclusions = runtime_config.program_datum_inclusions.clone();
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
         bank.transaction_debug_keys = debug_keys;
         bank.runtime_config = runtime_config;
@@ -1627,7 +1627,7 @@ impl Bank {
             loaded_programs_cache: parent.loaded_programs_cache.clone(),
             check_program_modification_slot: false,
             epoch_reward_status: parent.epoch_reward_status.clone(),
-            dataum_excluded_programs: Self::get_dataum_excluded_programs(),
+            program_datum_inclusions: parent.program_datum_inclusions.clone(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1778,39 +1778,6 @@ impl Bank {
         );
     }
 
-    /// programs that we don't need the data for
-    /// both the owner and the account itself are compared
-    fn get_dataum_excluded_programs() -> (HashSet<Pubkey>, HashSet<Pubkey>) {
-        let mut token_set = HashSet::<Pubkey>::new();
-        //token
-        token_set.insert(Pubkey::try_from("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap());
-
-        //my logic for detecting and only including mints doesn't apply to 2022
-        //token2022
-        //token_set.insert(Pubkey::try_from("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap());
-
-        let mut other_set = HashSet::<Pubkey>::new();
-        //bpf loader
-        other_set.insert(Pubkey::try_from("BPFLoaderUpgradeab1e11111111111111111111111").unwrap());
-        //voting
-        other_set.insert(Pubkey::try_from("Vote111111111111111111111111111111111111111").unwrap());
-        //address lookups
-        other_set.insert(Pubkey::try_from("AddressLookupTab1e1111111111111111111111111").unwrap());
-        //system
-        other_set.insert(Pubkey::try_from("11111111111111111111111111111111").unwrap());
-        //sysvars
-        other_set.insert(Pubkey::try_from("SysvarEpochSchedu1e111111111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("SysvarFees111111111111111111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("Sysvar1nstructions1111111111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("SysvarRecentB1ockHashes11111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("SysvarRent111111111111111111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("SysvarS1otHashes111111111111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("SysvarStakeHistory1111111111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("SysvarEpochRewards1111111111111111111111111").unwrap());
-        other_set.insert(Pubkey::try_from("SysvarLastRestartS1ot1111111111111111111111").unwrap());
-        (token_set, other_set)
-    }
-
     pub fn byte_limit_for_scans(&self) -> Option<usize> {
         self.rc
             .accounts
@@ -1941,6 +1908,7 @@ impl Bank {
             T::default()
         }
         let feature_set = new();
+        let program_datum_inclusions = runtime_config.program_datum_inclusions.clone();
         let mut bank = Self {
             incremental_snapshot_persistence: fields.incremental_snapshot_persistence,
             bank_freeze_or_destruction_incremented: AtomicBool::default(),
@@ -2003,7 +1971,7 @@ impl Bank {
             loaded_programs_cache: Arc::<RwLock<LoadedPrograms>>::default(),
             check_program_modification_slot: false,
             epoch_reward_status: EpochRewardStatus::default(),
-            dataum_excluded_programs: Self::get_dataum_excluded_programs(),
+            program_datum_inclusions,
         };
         bank.bank_created();
 
@@ -3980,16 +3948,20 @@ impl Bank {
         balances
     }
 
-    pub fn collect_balances_and_datum(&self, batch: &TransactionBatch) -> (TransactionBalances, TransactionDatum) {
+    pub fn collect_balances_and_datum(
+        &self,
+        batch: &TransactionBatch,
+        pre_or_post: PreOrPostDatum,
+    ) -> (TransactionBalances, TransactionDatum) {
         let mut balances: TransactionBalances = vec![];
         let mut datum: TransactionDatum = vec![];
         for transaction in batch.sanitized_transactions() {
             let mut transaction_balances: Vec<u64> = vec![];
             let mut transaction_datum: Vec<Option<Vec<u8>>> = vec![];
             for account_key in transaction.message().account_keys().iter() {
-                let balance_and_data = self.get_balance_and_data(account_key);
-                transaction_balances.push(balance_and_data.0);
-                transaction_datum.push(balance_and_data.1);
+                let (balance, data) = self.get_balance_and_data(account_key, &pre_or_post);
+                transaction_balances.push(balance);
+                transaction_datum.push(data);
             }
             balances.push(transaction_balances);
             datum.push(transaction_datum);
@@ -5886,9 +5858,13 @@ impl Bank {
         enable_return_data_recording: bool,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (TransactionResults, TransactionBalancesSet, TransactionDatumSet) {
+    ) -> (
+        TransactionResults,
+        TransactionBalancesSet,
+        TransactionDatumSet,
+    ) {
         let (pre_balances, pre_datum) = if collect_balances {
-            self.collect_balances_and_datum(batch)
+            self.collect_balances_and_datum(batch, PreOrPostDatum::PreDatum)
         } else {
             (vec![], vec![])
         };
@@ -5931,7 +5907,7 @@ impl Bank {
             timings,
         );
         let (post_balances, post_datum) = if collect_balances {
-            self.collect_balances_and_datum(batch)
+            self.collect_balances_and_datum(batch, PreOrPostDatum::PostDatum)
         } else {
             (vec![], vec![])
         };
@@ -6058,20 +6034,17 @@ impl Bank {
         account.lamports()
     }
 
-    pub fn read_data(&self, key: &Pubkey, account: &AccountSharedData) -> Option<Vec<u8>> {
+    pub fn read_data(
+        &self,
+        account: &AccountSharedData,
+        pre_or_post: &PreOrPostDatum,
+    ) -> Option<Vec<u8>> {
         let data = account.data();
         let owner = account.owner();
-        //no data for
-        //large accounts
-        if data.len() > STEP_TX_DATUM_MAX_SIZE 
-            //executable accounts
-            || account.executable() 
-            //exclude token program NON MINT accounts
-            || (self.dataum_excluded_programs.0.contains(owner) && data.len() != 82)
-            //exclude by owner
-            || self.dataum_excluded_programs.1.contains(owner)
-            //exclude by key
-            || self.dataum_excluded_programs.1.contains(key) {
+        let inclusion = self.program_datum_inclusions.get(owner)?;
+        let include_data = inclusion.can_include_datum(pre_or_post, &data);
+
+        if !include_data {
             None
         } else {
             Some(data.to_vec())
@@ -6084,12 +6057,16 @@ impl Bank {
             .map(|x| Self::read_balance(&x))
             .unwrap_or(0)
     }
-    pub fn get_balance_and_data(&self, pubkey: &Pubkey) -> (u64, Option<Vec<u8>>) {
+    pub fn get_balance_and_data(
+        &self,
+        pubkey: &Pubkey,
+        pre_or_post: &PreOrPostDatum,
+    ) -> (u64, Option<Vec<u8>>) {
         self.get_account(pubkey)
             .map(|x| {
                 (
                     Self::read_balance(&x),
-                    Self::read_data(self, pubkey, &x),
+                    Self::read_data(self, &x, pre_or_post),
                 )
             })
             .unwrap_or((0, None))
