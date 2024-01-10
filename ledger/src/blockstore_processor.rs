@@ -28,8 +28,8 @@ use {
         accounts_index::AccountSecondaryIndexes,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         bank::{
-            Bank, TransactionBalancesSet, TransactionDatumSet, TransactionExecutionDetails, TransactionExecutionResult,
-            TransactionResults,
+            Bank, TransactionBalancesSet, TransactionDatumSet, TransactionExecutionDetails,
+            TransactionExecutionResult, TransactionResults,
         },
         bank_forks::BankForks,
         bank_utils,
@@ -3867,6 +3867,7 @@ pub mod tests {
                 ..
             },
             _balances,
+            _datums,
         ) = batch.bank().load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,

@@ -235,7 +235,7 @@ pub(crate) mod tests {
         solana_account_decoder::parse_token::token_amount_to_ui_amount,
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path},
         solana_runtime::{
-            bank::{Bank, NonceFull, NoncePartial, TransactionBalancesSet},
+            bank::{Bank, NonceFull, NoncePartial, TransactionBalancesSet, TransactionDatumSet},
             rent_debits::RentDebits,
         },
         solana_sdk::{
@@ -431,6 +431,10 @@ pub(crate) mod tests {
         let transaction_index: usize = bank.transaction_count().try_into().unwrap();
         let transaction_status_batch = TransactionStatusBatch {
             bank,
+            datum: TransactionDatumSet {
+                post_datum: vec![vec![Some(vec![0x69])]],
+                pre_datum: vec![vec![Some(vec![0x04, 0x20])]],
+            },
             transactions: vec![transaction],
             execution_results: vec![transaction_result],
             balances,

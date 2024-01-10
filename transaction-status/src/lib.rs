@@ -457,8 +457,18 @@ impl UiTransactionStatusMeta {
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
-            pre_datum: meta.pre_datum.map(|a|a.into_iter().map(|b|b.map(|c|BASE64_STANDARD.encode(c))).into_iter().collect()),
-            post_datum: meta.post_datum.map(|a|a.into_iter().map(|b|b.map(|c|BASE64_STANDARD.encode(c))).into_iter().collect()),
+            pre_datum: meta.pre_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
+            post_datum: meta.post_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
             inner_instructions: meta
                 .inner_instructions
                 .map(|ixs| {
@@ -492,8 +502,18 @@ impl UiTransactionStatusMeta {
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
-            pre_datum: meta.pre_datum.map(|a|a.into_iter().map(|b|b.map(|c|BASE64_STANDARD.encode(c))).into_iter().collect()),
-            post_datum: meta.post_datum.map(|a|a.into_iter().map(|b|b.map(|c|BASE64_STANDARD.encode(c))).into_iter().collect()),
+            pre_datum: meta.pre_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
+            post_datum: meta.post_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
             inner_instructions: OptionSerializer::Skip,
             log_messages: OptionSerializer::Skip,
             pre_token_balances: meta
@@ -524,8 +544,18 @@ impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
-            pre_datum: meta.pre_datum.map(|a|a.into_iter().map(|b|b.map(|c|BASE64_STANDARD.encode(c))).into_iter().collect()),
-            post_datum: meta.post_datum.map(|a|a.into_iter().map(|b|b.map(|c|BASE64_STANDARD.encode(c))).into_iter().collect()),
+            pre_datum: meta.pre_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
+            post_datum: meta.post_datum.map(|a| {
+                a.into_iter()
+                    .map(|b| b.map(|c| BASE64_STANDARD.encode(c)))
+                    .into_iter()
+                    .collect()
+            }),
             inner_instructions: meta
                 .inner_instructions
                 .map(|ixs| ixs.into_iter().map(Into::into).collect())
@@ -1504,6 +1534,8 @@ mod test {
             fee: 1234,
             pre_balances: vec![1, 2, 3],
             post_balances: vec![4, 5, 6],
+            pre_datum: None,
+            post_datum: None,
             inner_instructions: None,
             log_messages: None,
             pre_token_balances: None,
