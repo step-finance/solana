@@ -17,6 +17,7 @@ use {
         optimistically_confirmed_bank_tracker::SlotNotification,
         transaction_notifier_interface::TransactionNotifierArc,
     },
+    solana_runtime::program_inclusions::ProgramDatumInclusions,
     std::{
         path::{Path, PathBuf},
         sync::{
@@ -55,8 +56,14 @@ impl GeyserPluginService {
     pub fn new(
         confirmed_bank_receiver: Receiver<SlotNotification>,
         geyser_plugin_config_files: &[PathBuf],
+        inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) -> Result<Self, GeyserPluginServiceError> {
-        Self::new_with_receiver(confirmed_bank_receiver, geyser_plugin_config_files, None)
+        Self::new_with_receiver(
+            confirmed_bank_receiver,
+            geyser_plugin_config_files,
+            None,
+            inclusions,
+        )
     }
 
     pub fn new_with_receiver(
@@ -66,12 +73,13 @@ impl GeyserPluginService {
             Receiver<GeyserPluginManagerRequest>,
             Arc<AtomicBool>,
         )>,
+        inclusions: Arc<RwLock<ProgramDatumInclusions>>,
     ) -> Result<Self, GeyserPluginServiceError> {
         info!(
             "Starting GeyserPluginService from config files: {:?}",
             geyser_plugin_config_files
         );
-        let mut plugin_manager = GeyserPluginManager::new();
+        let mut plugin_manager = GeyserPluginManager::new(inclusions);
 
         for geyser_plugin_config_file in geyser_plugin_config_files {
             Self::load_plugin(&mut plugin_manager, geyser_plugin_config_file)?;

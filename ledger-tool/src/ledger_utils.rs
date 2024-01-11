@@ -259,9 +259,16 @@ pub fn load_and_process_ledger(
 
         let (confirmed_bank_sender, confirmed_bank_receiver) = unbounded();
         drop(confirmed_bank_sender);
-        let geyser_service =
-            GeyserPluginService::new(confirmed_bank_receiver, &geyser_config_files)
-                .map_err(LoadAndProcessLedgerError::GeyserServiceSetup)?;
+        let inclusions_copy = process_options
+            .runtime_config
+            .program_datum_inclusions
+            .clone();
+        let geyser_service = GeyserPluginService::new(
+            confirmed_bank_receiver,
+            &geyser_config_files,
+            inclusions_copy,
+        )
+        .map_err(LoadAndProcessLedgerError::GeyserServiceSetup)?;
         (
             geyser_service.get_accounts_update_notifier(),
             geyser_service.get_transaction_notifier(),

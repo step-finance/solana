@@ -1502,7 +1502,7 @@ impl JsonRpcRequestProcessor {
 
             let encode_transaction =
                 |confirmed_tx_with_meta: ConfirmedTransactionWithStatusMeta| -> Result<EncodedConfirmedTransactionWithStatusMeta> {
-                    Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version).map_err(RpcCustomError::from)?)
+                    Ok(confirmed_tx_with_meta.encode(encoding, max_supported_transaction_version, 0).map_err(RpcCustomError::from)?)
                 };
 
             match confirmed_transaction.unwrap_or(None) {
