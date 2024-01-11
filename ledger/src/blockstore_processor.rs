@@ -35,7 +35,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, TransactionBalancesSet},
+        bank::{Bank, TransactionBalancesSet, TransactionDatumSet},
         bank_forks::BankForks,
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -157,7 +157,7 @@ pub fn execute_batch(
         vec![]
     };
 
-    let (tx_results, balances) = batch.bank().load_execute_and_commit_transactions(
+    let (tx_results, balances, datum) = batch.bank().load_execute_and_commit_transactions(
         batch,
         MAX_PROCESSING_AGE,
         transaction_status_sender.is_some(),
@@ -203,6 +203,7 @@ pub fn execute_batch(
             transactions,
             execution_results,
             balances,
+            datum,
             token_balances,
             rent_debits,
             transaction_indexes.to_vec(),
@@ -1828,6 +1829,7 @@ pub struct TransactionStatusBatch {
     pub transactions: Vec<SanitizedTransaction>,
     pub execution_results: Vec<Option<TransactionExecutionDetails>>,
     pub balances: TransactionBalancesSet,
+    pub datum: TransactionDatumSet,
     pub token_balances: TransactionTokenBalancesSet,
     pub rent_debits: Vec<RentDebits>,
     pub transaction_indexes: Vec<usize>,
@@ -1845,6 +1847,7 @@ impl TransactionStatusSender {
         transactions: Vec<SanitizedTransaction>,
         execution_results: Vec<TransactionExecutionResult>,
         balances: TransactionBalancesSet,
+        datum: TransactionDatumSet,
         token_balances: TransactionTokenBalancesSet,
         rent_debits: Vec<RentDebits>,
         transaction_indexes: Vec<usize>,
@@ -1864,6 +1867,7 @@ impl TransactionStatusSender {
                     })
                     .collect(),
                 balances,
+                datum,
                 token_balances,
                 rent_debits,
                 transaction_indexes,
@@ -3950,6 +3954,7 @@ pub mod tests {
                 ..
             },
             _balances,
+            _datums,
         ) = batch.bank().load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
