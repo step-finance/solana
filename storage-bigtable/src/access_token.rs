@@ -11,7 +11,7 @@ use {
     std::{
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             {Arc, RwLock},
         },
         time::Instant,
@@ -40,6 +40,8 @@ pub struct AccessToken {
     scope: Scope,
     refresh_active: Arc<AtomicBool>,
     token: Arc<RwLock<(Token, Instant)>>,
+    token_refresh_start_time: Arc<AtomicU64>,
+    get_token_timeout_seconds: u64,
 }
 
 impl AccessToken {
@@ -57,6 +59,8 @@ impl AccessToken {
                 credentials,
                 scope,
                 token,
+                token_refresh_start_time: Arc::new(AtomicU64::new(0)),
+                get_token_timeout_seconds: 5,
                 refresh_active: Arc::new(AtomicBool::new(false)),
             };
             Ok(access_token)

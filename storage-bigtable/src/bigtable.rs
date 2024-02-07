@@ -4,9 +4,11 @@ use {
     crate::{
         access_token::{AccessToken, Scope},
         compression::{compress_best, decompress},
-        root_ca_certificate, CredentialType,
+        root_ca_certificate,
     },
     backoff::{future::retry, ExponentialBackoff},
+    futures::StreamExt,
+    futures::TryStreamExt,
     log::*,
     std::{
         str::FromStr,
@@ -33,7 +35,10 @@ mod google {
         }
     }
 }
+use futures::Stream;
 use google::bigtable::v2::*;
+
+use crate::CredentialType;
 
 pub type RowKey = String;
 pub type RowData = Vec<(CellName, CellValue)>;
@@ -130,6 +135,7 @@ impl BigTableConnection {
     pub async fn new(
         instance_name: &str,
         app_profile_id: &str,
+        project: &str,
         read_only: bool,
         timeout: Option<Duration>,
         credential_type: CredentialType,
@@ -159,12 +165,8 @@ impl BigTableConnection {
                 .await
                 .map_err(Error::AccessToken)?;
 
-                let table_prefix = format!(
-                    "projects/{}/instances/{}/tables/",
-                    access_token.project(),
-                    instance_name
-                );
-
+                let table_prefix =
+                    format!("projects/{}/instances/{}/tables/", project, instance_name);
                 let endpoint = {
                     let endpoint =
                         tonic::transport::Channel::from_static("https://bigtable.googleapis.com")
@@ -291,21 +293,6 @@ impl BigTableConnection {
         .await
     }
 
-    pub async fn get_bincode_cells_with_retry<T>(
-        &self,
-        table: &str,
-        row_keys: &[RowKey],
-    ) -> Result<Vec<(RowKey, Result<T>)>>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        retry(ExponentialBackoff::default(), || async {
-            let mut client = self.client();
-            Ok(client.get_bincode_cells(table, row_keys).await?)
-        })
-        .await
-    }
-
     pub async fn put_protobuf_cells_with_retry<T>(
         &self,
         table: &str,
@@ -331,12 +318,10 @@ pub struct BigTable<F: FnMut(Request<()>) -> InterceptedRequestResult> {
 }
 
 impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
-    async fn decode_read_rows_response(
+    fn decode_read_rows_response(
         &self,
         mut rrr: tonic::codec::Streaming<ReadRowsResponse>,
-    ) -> Result<Vec<(RowKey, RowData)>> {
-        let mut rows: Vec<(RowKey, RowData)> = vec![];
-
+    ) -> impl Stream<Item = Result<(RowKey, RowData)>> + '_ {
         let mut row_key = None;
         let mut row_data = vec![];
 
@@ -346,70 +331,72 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         let mut cell_version_ok = true;
         let started = Instant::now();
 
-        while let Some(res) = rrr.message().await? {
-            if let Some(timeout) = self.timeout {
-                if Instant::now().duration_since(started) > timeout {
-                    return Err(Error::Timeout);
-                }
-            }
-            for (i, mut chunk) in res.chunks.into_iter().enumerate() {
-                // The comments for `read_rows_response::CellChunk` provide essential details for
-                // understanding how the below decoding works...
-                trace!("chunk {}: {:?}", i, chunk);
-
-                // Starting a new row?
-                if !chunk.row_key.is_empty() {
-                    row_key = String::from_utf8(chunk.row_key).ok(); // Require UTF-8 for row keys
-                }
-
-                // Starting a new cell?
-                if let Some(qualifier) = chunk.qualifier {
-                    if let Some(cell_name) = cell_name {
-                        row_data.push((cell_name, cell_value));
-                        cell_value = vec![];
-                    }
-                    cell_name = String::from_utf8(qualifier).ok(); // Require UTF-8 for cell names
-                    cell_timestamp = chunk.timestamp_micros;
-                    cell_version_ok = true;
-                } else {
-                    // Continuing the existing cell.  Check if this is the start of another version of the cell
-                    if chunk.timestamp_micros != 0 {
-                        if chunk.timestamp_micros < cell_timestamp {
-                            cell_version_ok = false; // ignore older versions of the cell
-                        } else {
-                            // newer version of the cell, remove the older cell
-                            cell_version_ok = true;
-                            cell_value = vec![];
-                            cell_timestamp = chunk.timestamp_micros;
-                        }
+        async_stream::try_stream! {
+            while let Some(res) = rrr.message().await? {
+                if let Some(timeout) = self.timeout {
+                    if Instant::now().duration_since(started) > timeout {
+                        Err(Error::Timeout)?;
+                        break;
                     }
                 }
-                if cell_version_ok {
-                    cell_value.append(&mut chunk.value);
-                }
+                for (i, mut chunk) in res.chunks.into_iter().enumerate() {
+                    // The comments for `read_rows_response::CellChunk` provide essential details for
+                    // understanding how the below decoding works...
+                    trace!("chunk {}: {:?}", i, chunk);
 
-                // End of a row?
-                if chunk.row_status.is_some() {
-                    if let Some(read_rows_response::cell_chunk::RowStatus::CommitRow(_)) =
-                        chunk.row_status
-                    {
+                    // Starting a new row?
+                    if !chunk.row_key.is_empty() {
+                        row_key = String::from_utf8(chunk.row_key).ok(); // Require UTF-8 for row keys
+                    }
+
+                    // Starting a new cell?
+                    if let Some(qualifier) = chunk.qualifier {
                         if let Some(cell_name) = cell_name {
                             row_data.push((cell_name, cell_value));
+                            cell_value = vec![];
                         }
-
-                        if let Some(row_key) = row_key {
-                            rows.push((row_key, row_data))
+                        cell_name = String::from_utf8(qualifier).ok(); // Require UTF-8 for cell names
+                        cell_timestamp = chunk.timestamp_micros;
+                        cell_version_ok = true;
+                    } else {
+                        // Continuing the existing cell.  Check if this is the start of another version of the cell
+                        if chunk.timestamp_micros != 0 {
+                            if chunk.timestamp_micros < cell_timestamp {
+                                cell_version_ok = false; // ignore older versions of the cell
+                            } else {
+                                // newer version of the cell, remove the older cell
+                                cell_version_ok = true;
+                                cell_value = vec![];
+                                cell_timestamp = chunk.timestamp_micros;
+                            }
                         }
                     }
+                    if cell_version_ok {
+                        cell_value.append(&mut chunk.value);
+                    }
 
-                    row_key = None;
-                    row_data = vec![];
-                    cell_value = vec![];
-                    cell_name = None;
+                    // End of a row?
+                    if chunk.row_status.is_some() {
+                        if let Some(read_rows_response::cell_chunk::RowStatus::CommitRow(_)) =
+                            chunk.row_status
+                        {
+                            if let Some(cell_name) = cell_name {
+                                row_data.push((cell_name, cell_value));
+                            }
+
+                            if let Some(row_key) = row_key {
+                                yield (row_key, row_data);
+                            }
+                        }
+
+                        row_key = None;
+                        row_data = vec![];
+                        cell_value = vec![];
+                        cell_name = None;
+                    }
                 }
             }
         }
-        Ok(rows)
     }
 
     fn refresh_access_token(&self) {
@@ -432,10 +419,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         start_at: Option<RowKey>,
         end_at: Option<RowKey>,
         rows_limit: i64,
-    ) -> Result<Vec<RowKey>> {
-        if rows_limit == 0 {
-            return Ok(vec![]);
-        }
+    ) -> Result<impl Stream<Item = Result<RowKey>> + '_> {
         self.refresh_access_token();
         let response = self
             .client
@@ -477,8 +461,8 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             .await?
             .into_inner();
 
-        let rows = self.decode_read_rows_response(response).await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        let rows = self.decode_read_rows_response(response);
+        Ok(rows.map(|r| r.map(|s| s.0)))
     }
 
     /// Check whether a row key exists in a `table`
@@ -504,8 +488,10 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             .await?
             .into_inner();
 
-        let rows = self.decode_read_rows_response(response).await?;
-        Ok(!rows.is_empty())
+        let s = self.decode_read_rows_response(response);
+        futures::pin_mut!(s);
+        let has_next = s.try_next().await?.is_some();
+        Ok(has_next)
     }
 
     /// Get latest data from `table`.
@@ -526,10 +512,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         start_at: Option<RowKey>,
         end_at: Option<RowKey>,
         rows_limit: i64,
-    ) -> Result<Vec<(RowKey, RowData)>> {
-        if rows_limit == 0 {
-            return Ok(vec![]);
-        }
+    ) -> Result<impl Stream<Item = Result<(RowKey, RowData)>> + '_> {
         self.refresh_access_token();
         let response = self
             .client
@@ -557,7 +540,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             .await?
             .into_inner();
 
-        self.decode_read_rows_response(response).await
+        Ok(self.decode_read_rows_response(response))
     }
 
     /// Get latest data from multiple rows of `table`, if those rows exist.
@@ -565,7 +548,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         &mut self,
         table_name: &str,
         row_keys: &[RowKey],
-    ) -> Result<Vec<(RowKey, RowData)>> {
+    ) -> Result<impl Stream<Item = Result<(RowKey, RowData)>> + '_> {
         self.refresh_access_token();
 
         let response = self
@@ -591,7 +574,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             .await?
             .into_inner();
 
-        self.decode_read_rows_response(response).await
+        Ok(self.decode_read_rows_response(response))
     }
 
     /// Get latest data from a single row of `table`, if that row exists. Returns an error if that
@@ -626,10 +609,11 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             .await?
             .into_inner();
 
-        let rows = self.decode_read_rows_response(response).await?;
-        rows.into_iter()
-            .next()
-            .map(|r| r.1)
+        let rows = self.decode_read_rows_response(response);
+        futures::pin_mut!(rows);
+        rows.try_next()
+            .await?
+            .map(|a| a.1)
             .ok_or(Error::RowNotFound)
     }
 
@@ -736,26 +720,23 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
         deserialize_bincode_cell_data(&row_data, table, key.to_string())
     }
 
-    pub async fn get_bincode_cells<T>(
-        &mut self,
-        table: &str,
+    pub async fn get_bincode_cells<'a, T>(
+        &'a mut self,
+        table: &'a str,
         keys: &[RowKey],
-    ) -> Result<Vec<(RowKey, Result<T>)>>
+    ) -> Result<impl Stream<Item = Result<(RowKey, Result<T>)>> + '_>
     where
         T: serde::de::DeserializeOwned,
     {
-        Ok(self
-            .get_multi_row_data(table, keys)
-            .await?
-            .into_iter()
-            .map(|(key, row_data)| {
+        let s = self.get_multi_row_data(table, keys).await?.map(|row| {
+            row.map(|(key, row_data)| {
                 let key_str = key.to_string();
-                (
-                    key,
-                    deserialize_bincode_cell_data(&row_data, table, key_str),
-                )
+                let cell_data_result =
+                    deserialize_bincode_cell_data(&row_data, table, key_str.clone());
+                (key_str, cell_data_result)
             })
-            .collect())
+        });
+        Ok(s)
     }
 
     pub async fn get_protobuf_or_bincode_cell<B, P>(
@@ -772,28 +753,32 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
     }
 
     pub async fn get_protobuf_or_bincode_cells<'a, B, P>(
-        &mut self,
+        &'a mut self,
         table: &'a str,
         row_keys: impl IntoIterator<Item = RowKey>,
-    ) -> Result<impl Iterator<Item = (RowKey, CellData<B, P>)> + 'a>
+    ) -> Result<impl Stream<Item = Result<(RowKey, CellData<B, P>)>> + 'a>
     where
         B: serde::de::DeserializeOwned,
         P: prost::Message + Default,
     {
-        Ok(self
+        let s = self
             .get_multi_row_data(
                 table,
                 row_keys.into_iter().collect::<Vec<RowKey>>().as_slice(),
             )
             .await?
-            .into_iter()
-            .map(|(key, row_data)| {
-                let key_str = key.to_string();
-                (
-                    key,
-                    deserialize_protobuf_or_bincode_cell_data(&row_data, table, key_str).unwrap(),
-                )
-            }))
+            .map(|row| {
+                row.and_then(|(key, row_data)| {
+                    let key_str = key.to_string();
+                    let cell_data_result = deserialize_protobuf_or_bincode_cell_data(
+                        &row_data,
+                        table,
+                        key_str.clone(),
+                    )?;
+                    Ok((key_str, cell_data_result))
+                })
+            });
+        Ok(s)
     }
 
     pub async fn put_bincode_cells<T>(

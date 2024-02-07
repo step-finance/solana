@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+async-stream = "0.3.2"
 backoff = { workspace = true, features = ["tokio"] }
 bincode = { workspace = true }
 bytes = { workspace = true }
@@ -35,6 +36,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true, features = ["tls", "transport"] }
 zstd = { workspace = true }
+itertools = "0.10.3"
 
 # openssl is a dependency of the goauth and smpl_jwt crates, but explicitly
 # declare it here as well to activate the "vendored" feature that builds OpenSSL
