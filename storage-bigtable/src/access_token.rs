@@ -11,7 +11,7 @@ use {
     std::{
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             {Arc, RwLock},
         },
         time::Instant,
@@ -27,11 +27,11 @@ fn load_credentials(filepath: Option<String>) -> Result<Credentials, String> {
         })?,
     };
     Credentials::from_file(&path)
-        .map_err(|err| format!("Failed to read GCP credentials from {}: {}", path, err))
+        .map_err(|err| format!("Failed to read GCP credentials from {path}: {err}"))
 }
 
 fn load_stringified_credentials(credential: String) -> Result<Credentials, String> {
-    Credentials::from_str(&credential).map_err(|err| format!("{}", err))
+    Credentials::from_str(&credential).map_err(|err| format!("{err}"))
 }
 
 #[derive(Clone)]
@@ -40,6 +40,8 @@ pub struct AccessToken {
     scope: Scope,
     refresh_active: Arc<AtomicBool>,
     token: Arc<RwLock<(Token, Instant)>>,
+    token_refresh_start_time: Arc<AtomicU64>,
+    get_token_timeout_seconds: u64,
 }
 
 impl AccessToken {
@@ -50,13 +52,15 @@ impl AccessToken {
         };
 
         if let Err(err) = credentials.rsa_key() {
-            Err(format!("Invalid rsa key: {}", err))
+            Err(format!("Invalid rsa key: {err}"))
         } else {
             let token = Arc::new(RwLock::new(Self::get_token(&credentials, &scope).await?));
             let access_token = Self {
                 credentials,
                 scope,
                 token,
+                token_refresh_start_time: Arc::new(AtomicU64::new(0)),
+                get_token_timeout_seconds: 5,
                 refresh_active: Arc::new(AtomicBool::new(false)),
             };
             Ok(access_token)
@@ -84,7 +88,7 @@ impl AccessToken {
 
         let token = goauth::get_token(&jwt, credentials)
             .await
-            .map_err(|err| format!("Failed to refresh access token: {}", err))?;
+            .map_err(|err| format!("Failed to refresh access token: {err}"))?;
 
         info!("Token expires in {} seconds", token.expires_in());
         Ok((token, Instant::now()))
@@ -105,13 +109,24 @@ impl AccessToken {
                 .compare_and_swap(false, true, Ordering::Relaxed)
             {
                 // Refresh already pending
+                let token_refresh_time = self.token_refresh_start_time.load(Ordering::SeqCst);
+                if token_refresh_time != 0
+                    && token_refresh_time + (self.get_token_timeout_seconds * 2)
+                        < token_r.1.elapsed().as_secs()
+                {
+                    warn!("Token refresh timeout failed to timeout!");
+                    self.refresh_active.store(false, Ordering::Relaxed);
+                }
                 return;
             }
+
+            info!("Refreshing token");
+            self.token_refresh_start_time
+                .store(token_r.1.elapsed().as_secs(), Ordering::Relaxed);
         }
 
-        info!("Refreshing token");
         match time::timeout(
-            time::Duration::from_secs(5),
+            time::Duration::from_secs(self.get_token_timeout_seconds),
             Self::get_token(&self.credentials, &self.scope),
         )
         .await
@@ -125,6 +140,9 @@ impl AccessToken {
                 warn!("Token refresh timeout")
             }
         }
+
+        info!("Token refresh Complete!");
+        self.token_refresh_start_time.store(0, Ordering::Relaxed);
         self.refresh_active.store(false, Ordering::Relaxed);
     }
 
