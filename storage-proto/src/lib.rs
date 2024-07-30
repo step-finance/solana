@@ -200,6 +200,7 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
             fee,
             pre_balances,
             post_balances,
+            owners: None,
             pre_datum: None,
             post_datum: None,
             inner_instructions,

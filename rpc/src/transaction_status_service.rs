@@ -70,6 +70,7 @@ impl TransactionStatusService {
                 transactions,
                 execution_results,
                 datum,
+                owners,
                 balances,
                 token_balances,
                 rent_debits,
@@ -81,6 +82,7 @@ impl TransactionStatusService {
                     execution_result,
                     pre_balances,
                     post_balances,
+                    owners,
                     pre_datum,
                     post_datum,
                     pre_token_balances,
@@ -92,6 +94,7 @@ impl TransactionStatusService {
                     execution_results,
                     balances.pre_balances,
                     balances.post_balances,
+                    owners.owners,
                     datum.pre_datum,
                     datum.post_datum,
                     token_balances.pre_token_balances,
@@ -149,6 +152,7 @@ impl TransactionStatusService {
                             fee,
                             pre_balances,
                             post_balances,
+                            owners: Some(owners),
                             pre_datum: Some(pre_datum),
                             post_datum: Some(post_datum),
                             inner_instructions,
@@ -418,6 +422,7 @@ pub(crate) mod tests {
         let transaction_index: usize = bank.transaction_count().try_into().unwrap();
         let transaction_status_batch = TransactionStatusBatch {
             bank,
+            owners: vec![],
             datum: TransactionDatumSet {
                 post_datum: vec![vec![Some(vec![0x69])]],
                 pre_datum: vec![vec![Some(vec![0x04, 0x20])]],

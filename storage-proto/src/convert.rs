@@ -527,6 +527,7 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             status,
             fee,
             pre_balances,
+            owners: None,
             post_balances,
             pre_datum: None,
             post_datum: None,

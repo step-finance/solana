@@ -10,7 +10,7 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{
-        bank::{Bank, CommitTransactionCounts, TransactionBalancesSet, TransactionDatumSet},
+        bank::{Bank, CommitTransactionCounts, TransactionBalancesSet, TransactionDatumSet, TransactionOwnersSet},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         program_inclusions::PreOrPostDatum,
@@ -144,7 +144,7 @@ impl Committer {
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
             let txs = batch.sanitized_transactions().to_vec();
-            let (post_balances, post_datum) =
+            let (post_balances, post_datum, owners) =
                 bank.collect_balances_and_datum(batch, PreOrPostDatum::PostDatum);
             let post_token_balances =
                 collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);
@@ -170,6 +170,9 @@ impl Committer {
                     std::mem::take(&mut pre_balance_info.native),
                     post_balances,
                 ),
+                TransactionOwnersSet {
+                    owners,
+                },
                 TransactionDatumSet::new(std::mem::take(&mut pre_balance_info.datum), post_datum),
                 TransactionTokenBalancesSet::new(
                     std::mem::take(&mut pre_balance_info.token),

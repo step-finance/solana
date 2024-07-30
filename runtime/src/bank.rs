@@ -363,7 +363,6 @@ pub struct TransactionDatumSet {
 
 impl TransactionDatumSet {
     pub fn new(pre_datum: TransactionDatum, post_datum: TransactionDatum) -> Self {
-        assert_eq!(pre_datum.len(), post_datum.len());
         Self {
             pre_datum,
             post_datum,
@@ -371,6 +370,12 @@ impl TransactionDatumSet {
     }
 }
 pub type TransactionDatum = Vec<Vec<Option<Vec<u8>>>>;
+
+pub struct TransactionOwnersSet {
+    pub owners: TransactionOwners,
+}
+
+pub type TransactionOwners = Vec<Vec<Option<Pubkey>>>;
 
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
@@ -4561,21 +4566,25 @@ impl Bank {
         &self,
         batch: &TransactionBatch,
         pre_or_post: PreOrPostDatum,
-    ) -> (TransactionBalances, TransactionDatum) {
+    ) -> (TransactionBalances, TransactionDatum, TransactionOwners) {
         let mut balances: TransactionBalances = vec![];
         let mut datum: TransactionDatum = vec![];
+        let mut owners: TransactionOwners = vec![];
         for transaction in batch.sanitized_transactions() {
             let mut transaction_balances: Vec<u64> = vec![];
             let mut transaction_datum: Vec<Option<Vec<u8>>> = vec![];
+            let mut transaction_owners: Vec<Option<Pubkey>> = vec![];
             for account_key in transaction.message().account_keys().iter() {
-                let (balance, data) = self.get_balance_and_data(account_key, &pre_or_post);
+                let (balance, data, owner) = self.get_balance_and_data(account_key, &pre_or_post);
                 transaction_balances.push(balance);
                 transaction_datum.push(data);
+                transaction_owners.push(owner);
             }
             balances.push(transaction_balances);
             datum.push(transaction_datum);
+            owners.push(transaction_owners);
         }
-        (balances, datum)
+        (balances, datum, owners)
     }
 
     fn program_modification_slot(&self, pubkey: &Pubkey) -> Result<Slot> {
@@ -6343,11 +6352,12 @@ impl Bank {
         TransactionResults,
         TransactionBalancesSet,
         TransactionDatumSet,
+        TransactionOwnersSet,
     ) {
-        let (pre_balances, pre_datum) = if collect_balances {
+        let (pre_balances, pre_datum, ..) = if collect_balances {
             self.collect_balances_and_datum(batch, PreOrPostDatum::PreDatum)
         } else {
-            (vec![], vec![])
+            (vec![], vec![], vec![])
         };
 
         let LoadAndExecuteTransactionsOutput {
@@ -6388,15 +6398,16 @@ impl Bank {
             },
             timings,
         );
-        let (post_balances, post_datum) = if collect_balances {
+        let (post_balances, post_datum, owners) = if collect_balances {
             self.collect_balances_and_datum(batch, PreOrPostDatum::PostDatum)
         } else {
-            (vec![], vec![])
+            (vec![], vec![], vec![])
         };
         (
             results,
             TransactionBalancesSet::new(pre_balances, post_balances),
             TransactionDatumSet::new(pre_datum, post_datum),
+            TransactionOwnersSet { owners },
         )
     }
 
@@ -6520,15 +6531,16 @@ impl Bank {
         &self,
         pubkey: &Pubkey,
         pre_or_post: &PreOrPostDatum,
-    ) -> (u64, Option<Vec<u8>>) {
+    ) -> (u64, Option<Vec<u8>>, Option<Pubkey>) {
         self.get_account(pubkey)
             .map(|x| {
                 (
                     Self::read_balance(&x),
                     Self::read_data(self, &x, pre_or_post),
+                    Some(*x.owner()),
                 )
             })
-            .unwrap_or((0, None))
+            .unwrap_or((0, None, None))
     }
 
     /// Compute all the parents of the bank in order
