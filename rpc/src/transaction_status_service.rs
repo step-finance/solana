@@ -152,7 +152,7 @@ impl TransactionStatusService {
                             fee,
                             pre_balances,
                             post_balances,
-                            owners: Some(owners),
+                            post_owners: Some(owners),
                             pre_datum: Some(pre_datum),
                             post_datum: Some(post_datum),
                             inner_instructions,
@@ -229,7 +229,9 @@ pub(crate) mod tests {
             rent_debits::RentDebits,
         },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
-        solana_runtime::bank::{Bank, TransactionBalancesSet, TransactionDatumSet},
+        solana_runtime::bank::{
+            Bank, TransactionBalancesSet, TransactionDatumSet, TransactionOwnersSet,
+        },
         solana_sdk::{
             account_utils::StateMut,
             clock::Slot,
@@ -422,7 +424,7 @@ pub(crate) mod tests {
         let transaction_index: usize = bank.transaction_count().try_into().unwrap();
         let transaction_status_batch = TransactionStatusBatch {
             bank,
-            owners: vec![],
+            owners: TransactionOwnersSet { owners: vec![] },
             datum: TransactionDatumSet {
                 post_datum: vec![vec![Some(vec![0x69])]],
                 pre_datum: vec![vec![Some(vec![0x04, 0x20])]],

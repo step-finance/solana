@@ -353,7 +353,7 @@ pub struct TransactionStatusMeta {
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
-    pub owners: Option<Vec<Option<Pubkey>>>,
+    pub post_owners: Option<Vec<Option<Pubkey>>>,
     //the first Option is for backward compat
     //the inner Option is for if we filtered out the datum (exceeds max size)
     //if account data is empty, that is "", not None
@@ -376,7 +376,7 @@ impl Default for TransactionStatusMeta {
             fee: 0,
             pre_balances: vec![],
             post_balances: vec![],
-            owners: None,
+            post_owners: None,
             pre_datum: None,
             post_datum: None,
             inner_instructions: None,
@@ -400,7 +400,7 @@ pub struct UiTransactionStatusMeta {
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
-    pub owners: Option<Vec<Option<String>>>,
+    pub post_owners: Option<Vec<Option<String>>>,
     //the first Option is for backward compat
     //the inner Option is for if we filtered out the datum (exceeds max size)
     //if account data is empty, that is "", not None
@@ -482,7 +482,7 @@ impl UiTransactionStatusMeta {
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
-            owners: meta.owners.map(|o| {
+            post_owners: meta.post_owners.map(|o| {
                 o.into_iter()
                     .map(|ko| ko.map(|pk| pk.to_string()))
                     .collect()
@@ -532,7 +532,7 @@ impl UiTransactionStatusMeta {
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
-            owners: meta.owners.map(|o| {
+            post_owners: meta.post_owners.map(|o| {
                 o.into_iter()
                     .map(|ko| ko.map(|pk| pk.to_string()))
                     .collect()
@@ -579,7 +579,7 @@ impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
-            owners: meta.owners.map(|o| {
+            post_owners: meta.post_owners.map(|o| {
                 o.into_iter()
                     .map(|ko| ko.map(|pk| pk.to_string()))
                     .collect()
@@ -1585,7 +1585,7 @@ mod test {
             fee: 1234,
             pre_balances: vec![1, 2, 3],
             post_balances: vec![4, 5, 6],
-            owners: None,
+            post_owners: None,
             pre_datum: None,
             post_datum: None,
             inner_instructions: None,
