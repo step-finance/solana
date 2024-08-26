@@ -1103,6 +1103,7 @@ impl ConfirmedTransactionWithStatusMeta {
         self,
         encoding: UiTransactionEncoding,
         max_supported_transaction_version: Option<u8>,
+        index_in_block: usize,
     ) -> Result<EncodedConfirmedTransactionWithStatusMeta, EncodeError> {
         Ok(EncodedConfirmedTransactionWithStatusMeta {
             slot: self.slot,
@@ -1112,6 +1113,7 @@ impl ConfirmedTransactionWithStatusMeta {
                 true,
             )?,
             block_time: self.block_time,
+            index_in_block,
         })
     }
 
@@ -1127,6 +1129,7 @@ pub struct EncodedConfirmedTransactionWithStatusMeta {
     #[serde(flatten)]
     pub transaction: EncodedTransactionWithStatusMeta,
     pub block_time: Option<UnixTimestamp>,
+    pub index_in_block: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
