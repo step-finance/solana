@@ -245,9 +245,11 @@ impl GeyserPluginManager {
                 self.libs.push(new_lib);
 
                 // Reload datum inclusions
+                log::info!("Reloading datum inclusions");
                 let mut inclusions_write_lock = self.inclusions.write().unwrap();
                 *inclusions_write_lock =
                     load_datum_program_inclusions(&Some(vec![config_file.into()]));
+                log::info!("Reloaded datum inclusions");
             }
 
             // On failure, return error
