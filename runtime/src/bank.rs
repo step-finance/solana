@@ -857,7 +857,7 @@ pub struct Bank {
 
     epoch_reward_status: EpochRewardStatus,
     /// programs that will have their account data sent to geyser
-    pub program_datum_inclusions: Arc<ProgramDatumInclusions>,
+    pub program_datum_inclusions: Arc<RwLock<ProgramDatumInclusions>>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1045,7 +1045,7 @@ impl Bank {
             ))),
             check_program_modification_slot: false,
             epoch_reward_status: EpochRewardStatus::default(),
-            program_datum_inclusions: Arc::<ProgramDatumInclusions>::default(),
+            program_datum_inclusions: Arc::new(RwLock::new(ProgramDatumInclusions::default())),
         };
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
@@ -6511,7 +6511,8 @@ impl Bank {
     ) -> Option<Vec<u8>> {
         let data = account.data();
         let owner = account.owner();
-        let inclusion = self.program_datum_inclusions.get(owner)?;
+        let inclusions_lock = self.program_datum_inclusions.read().unwrap();
+        let inclusion = inclusions_lock.get(owner)?;
         let include_data = inclusion.can_include_datum(pre_or_post, &data);
 
         if !include_data {

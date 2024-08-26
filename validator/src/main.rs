@@ -1239,9 +1239,9 @@ pub fn main() {
     };
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some();
 
-    let program_datum_inclusions = Arc::new(load_datum_program_inclusions(
+    let program_datum_inclusions = Arc::new(RwLock::new(load_datum_program_inclusions(
         &on_start_geyser_plugin_config_files,
-    ));
+    )));
 
     let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
         || matches.is_present("enable_bigtable_ledger_upload")

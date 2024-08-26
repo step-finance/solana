@@ -512,6 +512,7 @@ impl Validator {
         let mut bank_notification_senders = Vec::new();
 
         let exit = Arc::new(AtomicBool::new(false));
+        let inclusions_copy = config.runtime_config.program_datum_inclusions.clone();
 
         let geyser_plugin_service =
             if let Some(geyser_plugin_config_files) = &config.on_start_geyser_plugin_config_files {
@@ -524,6 +525,7 @@ impl Validator {
                         confirmed_bank_receiver,
                         geyser_plugin_config_files,
                         rpc_to_plugin_manager_receiver_and_exit,
+                        inclusions_copy,
                     )
                     .map_err(|err| format!("Failed to load the Geyser plugin: {err:?}"))?,
                 )
