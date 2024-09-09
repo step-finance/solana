@@ -241,6 +241,7 @@ impl RpcSender for MockSender {
                 },
                 block_time: Some(1628633791),
                 index_in_block: 0,
+                slot_second_idx: None,
             })?,
             "getTransactionCount" => json![1234],
             "getSlot" => json![0],

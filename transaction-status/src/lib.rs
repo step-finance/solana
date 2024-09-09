@@ -1114,6 +1114,7 @@ impl ConfirmedTransactionWithStatusMeta {
             )?,
             block_time: self.block_time,
             index_in_block,
+            slot_second_idx: None,
         })
     }
 
@@ -1130,6 +1131,7 @@ pub struct EncodedConfirmedTransactionWithStatusMeta {
     pub transaction: EncodedTransactionWithStatusMeta,
     pub block_time: Option<UnixTimestamp>,
     pub index_in_block: usize,
+    pub slot_second_idx: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

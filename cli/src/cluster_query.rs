@@ -2104,6 +2104,7 @@ pub fn process_transaction_history(
                             slot,
                             transaction: transaction_with_meta,
                             index_in_block: _,
+                            slot_second_idx: _,
                         } = confirmed_transaction;
 
                         let decoded_transaction =

@@ -777,6 +777,7 @@ pub fn process_confirm(
                                 slot,
                                 transaction: transaction_with_meta,
                                 index_in_block: _,
+                                slot_second_idx: _,
                             } = confirmed_transaction;
 
                             let decoded_transaction =
